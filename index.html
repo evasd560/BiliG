@@ -48,9 +48,12 @@ const readStoredSession = () => { try{
   if(v.guest) return LOGIN_ENABLED?v:null;
   return v.access_token?v:null;
 }catch{ return null; } };
+// headers goes AFTER ...opts so a caller's own headers (the login token) are added to the defaults
+// instead of replacing them — replacing dropped apikey, and every signed-in request got a 401.
 const sbFetch = (path, opts={}) => fetch(`${SB_URL}/rest/v1${path}`, {
+  ...opts,
   headers:{ apikey:SB_KEY, "Content-Type":"application/json", Prefer:"return=representation", ...opts.headers },
-  ...opts }).then(r=>r.json());
+}).then(r=>r.json());
 const authFetch = (path,body) => fetch(`${SB_URL}/auth/v1${path}`,{
   method:"POST", headers:{apikey:SB_KEY,"Content-Type":"application/json"},
   body:JSON.stringify(body)}).then(r=>r.json());
@@ -878,7 +881,7 @@ function BiliG() {
     if(Array.isArray(d)&&d.length){
       setPhrases(prev=>[...d,...prev]); try{localStorage.setItem(IMPORTED_KEY,"1");}catch{}
       setDeviceCount(0); toast$(`${d.length} phrase${d.length>1?"s":""} added to the shared library ✓`);
-    }else toast$("Couldn't add them — nothing was changed. Try signing in again.","error");
+    }else toast$(`Couldn't add them — nothing was changed. ${d?.message||d?.msg||"No response from Supabase."}`,"error");
     setDeviceBusy(false);
   };
   const askAdmin = ()=>{ setAuthView("login"); setAuthError(""); setAuthSuccess(""); setAuthPw(""); setLoginOpen(true); };
