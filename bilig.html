@@ -78,7 +78,15 @@ const TOPIC_STYLE = {
   Other:       { bg:"#1a1825", a:"#e6e0ff", b:"#a99cf0", c:"#6f5bd6" },
   All:         { bg:"#1a1825", a:"#e6e0ff", b:"#a99cf0", c:"#6f5bd6" },
 };
-const getTopicStyle = t => TOPIC_STYLE[t] || TOPIC_STYLE.Other;
+// Categories made from pasted headings have no fixed colour: give each a stable one from its name.
+const CUSTOM_STYLES = [
+  { bg:"#3f9d4a", a:"#d3f5c9", b:"#7fd97a", c:"#2f8a3a" },
+  { bg:"#8e3fa8", a:"#f0d0fa", b:"#cf8be6", c:"#762f8e" },
+  { bg:"#a08a1f", a:"#f7ecb0", b:"#e0cb4a", c:"#86711a" },
+  { bg:"#5b6b7a", a:"#dbe6ee", b:"#9fb5c6", c:"#4b5a68" },
+  { bg:"#8a5a34", a:"#f3dcc4", b:"#d9a678", c:"#744a28" },
+];
+const getTopicStyle = t => TOPIC_STYLE[t] || (t?CUSTOM_STYLES[[...t].reduce((h,c)=>(h*31+c.charCodeAt(0))>>>0,7)%CUSTOM_STYLES.length]:TOPIC_STYLE.Other);
 const MASTERY_LABELS = ["New","Learning","Review","Mastered"];
 const MASTERY_COLORS = ["#b8b5c8","#60a5fa","#fb923c","#22c55e"];
 const SRS_MULT = [1.0,2.5,4.0], SRS_DAYS = [1,4,10];
@@ -95,10 +103,19 @@ function getGreeting() {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const getLang  = n  => LANGUAGES.find(l=>l.name===n)||LANGUAGES[0];
-const getTopic = id => TOPICS.find(t=>t.id===id)||TOPICS[0];
+const getTopic = id => TOPICS.find(t=>t.id===id)||(id?{id,label:id,icon:"🏷️"}:TOPICS[0]);   // an id not in TOPICS is a custom category
 const todayStr = () => new Date().toISOString().slice(0,10);
 const isDue    = p  => !p.srs_next_review || Date.now() >= p.srs_next_review;
 const masteryLevel = p => { const r=p.srs_reps||0; return r===0?0:r<3?1:r<6?2:3; };
+// "New" belongs to phrases added in the last 3 days. After that a phrase shows how well it is
+// known, and one that has never been reviewed shows nothing.
+const NEW_DAYS = 3;
+const isRecent = p => { const t=Date.parse(p?.created_at||p?.date); return Number.isFinite(t)&&Date.now()-t<NEW_DAYS*864e5; };
+const statusTag = p => {
+  if(isRecent(p)) return { label:"New", color:MASTERY_COLORS[0] };
+  const ml=masteryLevel(p||{});
+  return ml>0?{ label:MASTERY_LABELS[ml], color:MASTERY_COLORS[ml] }:null;
+};
 
 // ── Starter phrases (5 well-known ones, seeded so the diary is never empty) ────
 const STARTER_PHRASES = [
@@ -225,6 +242,22 @@ const STAT_SVGS = {
 };
 const getStatSvg = k => STAT_SVGS[k](`st-${k}`, STAT_PALETTE[k]);
 
+const Chevron = ({ dir }) => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d={dir==="left"?"M15 5l-7 7 7 7":"M9 5l7 7-7 7"}/>
+  </svg>
+);
+function DeckArrow({ dir, disabled, onClick }) {
+  return (
+    <button onClick={onClick} disabled={disabled} aria-label={dir==="left"?"Previous card":"Next card"}
+      style={{width:64,height:64,flexShrink:0,borderRadius:"50%",background:T.surface,border:outline(2.5),boxShadow:disabled?"none":drop(3,3),
+              color:INK,display:"flex",alignItems:"center",justifyContent:"center",cursor:disabled?"default":"pointer",
+              opacity:disabled?.3:1,transition:"opacity .2s, transform .15s"}}>
+      <Chevron dir={dir}/>
+    </button>
+  );
+}
+
 function StatIcon({ kind, size }) {
   return (
     <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"
@@ -299,18 +332,185 @@ async function readTextOnDevice(dataUrl, language){
   return cleanLines(data.text);
 }
 
-// Phone photos are routinely 4-8MB; shrink before reading or uploading.
-async function shrinkImage(file, max=1600){
+// Phone photos are routinely 4-8MB; shrink before reading or uploading. Arabic dots and
+// diacritics are tiny, so keep plenty of resolution and prefer lossless PNG (screenshots
+// stay crisp) unless that would bust the scan function's 5MB limit.
+async function shrinkImage(file, max=2400){
   const src = await readAsDataUrl(file);
   const img = await new Promise((resolve,reject)=>{ const i=new Image(); i.onload=()=>resolve(i); i.onerror=reject; i.src=src; });
   const scale = Math.min(1, max/Math.max(img.naturalWidth,img.naturalHeight));
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(img.naturalWidth*scale); canvas.height = Math.round(img.naturalHeight*scale);
   canvas.getContext("2d").drawImage(img,0,0,canvas.width,canvas.height);
-  const dataUrl = canvas.toDataURL("image/jpeg",.88);
-  return { dataUrl, base64:dataUrl.split(",")[1], mediaType:"image/jpeg" };
+  let dataUrl = canvas.toDataURL("image/png"), mediaType = "image/png";
+  if(dataUrl.length*3/4 > 4*1024*1024){ dataUrl = canvas.toDataURL("image/jpeg",.92); mediaType = "image/jpeg"; }
+  return { dataUrl, base64:dataUrl.split(",")[1], mediaType };
 }
 const isArabicScript = s => /\p{Script=Arabic}/u.test(s);
+
+// ── Bulk paste ────────────────────────────────────────────────────────────────
+// Turns pasted text into { foreign_text, native_text, notes, language, topic } rows.
+//   One line = one phrase: its Arabic is the phrase, its Latin parts are the transliteration
+//   and the translation ("marhaban - Hello - مرحبا"). The translation is the part next to
+//   the Arabic, so "مرحبا - Hello - marhaban" reads the same way. A bracketed part, or one
+//   that looks romanised (ā, ḥ, 3, 7…), is taken as the transliteration.
+//   Lines holding only one script pair up with their neighbours ("مرحبا" / "Hello").
+//   A heading line ("Food:", "# Travel") sets the category of the phrases beneath it.
+//   Text with no Arabic at all falls back to "phrase - meaning - notes" per line.
+const BIDI_MARKS = /[‎‏‪-‮⁦-⁩]/g;
+const BULLET     = /^\s*(?:[\d٠-٩]+\s*[.)\-:]|[-•*·▪●])\s+/;
+// What separates the parts of a line. Only unambiguous ones count: a dash, slash or colon with
+// a space each side, a run of dashes, a tab, or | = ~ →. A lone "-" or "/" touching letters
+// ("al-khayr", "and/or", "صباح-الخير") belongs to the word and stays.
+const PART_SPLIT = /\t+|\s+[-–—/:：]+\s+|[-–—]{2,}|\s*[|=~→]+\s*/;
+const EDGE_JUNK  = /^[\s\-–—=:|/•·>→,;،؛]+|[\s\-–—=:|/•·>→,;،؛]+$/g;
+const LOOKS_ROMANISED = /[Ā-ſḀ-ỿʻ-ʿ]|[a-z][2-9]|[2-9][a-z]/i;
+
+const TOPIC_ALIASES = {
+  Greetings:  ["greeting","salutation","introduction","meeting people"],
+  Politeness: ["polite","manners","courtesy","courtesies","polite phrases"],
+  Questions:  ["question","asking questions","question words"],
+  Emotions:   ["emotion","feelings","feeling","moods","mood"],
+  Expressions:["expression","idioms","idiom","common phrases","common expressions","everyday phrases","sayings"],
+  Food:       ["food and drink","drinks","dining","restaurant","restaurants","eating out","meals"],
+  Travel:     ["travelling","traveling","transport","transportation","directions","airport","hotel","hotels","getting around"],
+  Other:      ["misc","miscellaneous","general","various"],
+};
+// A category name typed or pasted by the user: Title Case, short.
+const newTopicName = x => String(x).trim().split(/\s+/).map(w=>w.charAt(0).toUpperCase()+w.slice(1).toLowerCase()).join(" ").slice(0,30).trim();
+const normTopic = x => String(x).toLowerCase().replace(/\s*&\s*/g," and ").replace(/[^\p{L}\s]/gu,"").replace(/\s+/g," ").trim();
+// exact: only the category's own name (safe for a bare word on a line); otherwise aliases too.
+// extra: custom categories already in the app, matched ignoring case so headings reuse them.
+function topicFromName(name, exact=false, extra=[]){
+  const n=normTopic(name);
+  if(!n) return null;
+  const hit=TOPICS.find(t=>t.id!=="All"&&(t.id.toLowerCase()===n||t.label.toLowerCase()===n))?.id||extra.find(x=>normTopic(x)===n);
+  if(hit) return hit;
+  if(exact) return null;
+  const alias=Object.entries(TOPIC_ALIASES).find(([,a])=>a.includes(n));
+  return alias?alias[0]:null;
+}
+
+// A heading that carries a marker ("Food:", "# Travel", "== Greetings ==", "Category: Emotions",
+// "[Questions]") and names a category. An unfamiliar name only counts when it is clearly a heading
+// (strong marker, or a trailing colon above a phrase line) and becomes a new category.
+function bulkHeader(line, next, extra){
+  if(!line||line.length>40||isArabicScript(line)) return null;
+  let s=line, strong=false, weak=false, colon=false;
+  const cut=(re,kind)=>{ s=s.replace(re,()=>{ if(kind==="strong") strong=true; else weak=true; if(kind==="colon") colon=true; return ""; }); };
+  cut(/^\s*(?:#{1,6}|={2,}|\*{2,}|-{2,}|—+)\s*/,"strong");
+  cut(/^\s*(?:category|topic|section|theme|group)\s*[:：=\-–—]\s*/i,"strong");
+  cut(/^\s*[\[(<]\s*/,"weak");
+  cut(/\s*(?:#{1,6}|={2,}|\*{2,}|-{2,}|—+)\s*$/,"strong");
+  cut(/\s*[:：]\s*$/,"colon");
+  cut(/\s*[\])>]\s*$/,"weak");
+  if(/^\s*\p{Extended_Pictographic}/u.test(s)) weak=true;        // "✈️ Getting around"
+  s=s.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu,"").trim();   // emoji and stray marks
+  if(!s||!(strong||weak||colon)||PART_SPLIT.test(s)||s.split(" ").length>5) return null;
+  const topic=topicFromName(s,false,extra);
+  if(topic) return {topic};
+  const phraseBelow=!!next&&isArabicScript(next);
+  if(!(strong||(colon&&phraseBelow))) return null;
+  const fresh=newTopicName(s);
+  return fresh?{topic:fresh,isNew:true}:null;
+}
+// A bare category word ("Food") on its own, after a blank line, above phrases or a blank line.
+function bareHeader(lines, i, extra){
+  if(i>0&&lines[i-1]) return null;
+  const topic=topicFromName(lines[i],true,extra), nx=lines[i+1];
+  if(!topic||nx===undefined) return null;
+  const mixed=isArabicScript(nx)&&/\p{Script=Latin}/u.test(nx);
+  return nx===""||mixed?{topic}:null;
+}
+
+// Cuts a line into runs of Arabic-script vs other letters. Digits, punctuation and marks ride
+// along with the run they sit in (so a dash between two Arabic words stays in the Arabic); an
+// opening bracket goes to the run it opens. Latin runs are then split at real separators.
+function bulkRuns(line){
+  const runs=[]; let cur=null, pend="";
+  const close=()=>{ if(cur){ const t=cur.text.replace(EDGE_JUNK,""); if(t) runs.push({type:cur.type,text:t}); cur=null; } };
+  for(const ch of line){
+    const type=/\p{Script=Arabic}/u.test(ch)?"ar":/\p{L}/u.test(ch)?"en":null;
+    if(!type){ pend+=ch; continue; }
+    if(cur&&cur.type!==type){
+      const open=pend.match(/[(\[{«“"']*$/)[0];
+      cur.text+=pend.slice(0,pend.length-open.length); close(); pend=open;
+    }
+    if(!cur) cur={type,text:""};
+    cur.text+=pend+ch; pend="";
+  }
+  if(cur){ cur.text+=pend; close(); }
+  return runs.flatMap(r=>r.type==="en"
+    ? r.text.split(PART_SPLIT).map(t=>t.replace(EDGE_JUNK,"")).filter(Boolean).map(text=>({type:"en",text}))
+    : [{type:"ar",text:r.text.replace(/\s*(?:\t+|[|=~→]+)\s*/g," / ").replace(/\s+/g," ")}]);
+}
+
+// → { rows, categories: [existing ids named in headings], created: [new category names] }
+// extraTopics: the custom category ids the app already has.
+function parseBulk(text, fallbackLang, extraTopics=[]){
+  const lines=String(text||"").replace(BIDI_MARKS,"").split(/\r?\n/)
+    .map(l=>l.replace(BULLET,"").replace(/[^\S\t]+/g," ").trim());
+  const arabic=isArabicScript(lines.join(" "));
+  const rows=[], categories=[], created=[];
+  let topic="Other", g=null;
+  const add=(foreign_text,native_text,notes,language,t)=>rows.push({ key:`bulk_${rows.length}`, keep:true, foreign_text, native_text, notes, language, topic:t });
+
+  // A group is everything that belongs to one phrase: its Arabic parts and its Latin parts.
+  const emit=grp=>{
+    const notes=[], means=[]; let t=grp.topic;
+    const note=x=>{ const own=topicFromName(x,true,extraTopics); if(own) t=own; else if(x) notes.push(x); };   // "(Food)" names the category
+    for(const part of (grp.enBefore?[...grp.en].reverse():grp.en)){   // English before the Arabic: read it from the Arabic outwards
+      let text=part;
+      const lead=text.match(/^[(\[]([^)\]]*)[)\]]\s*(.*)$/);      // "(marhaban) Hello" → note + meaning
+      if(lead){ note(lead[1].trim()); text=lead[2].trim(); }
+      const tail=text.match(/^(.*?)\s*[(\[]([^)\]]*)[)\]]$/);     // "Hello (marhaban)"
+      if(tail&&tail[1].trim()){ note(tail[2].trim()); text=tail[1].trim(); }
+      if(text) means.push(text);
+    }
+    // The translation is the Latin part nearest the Arabic; the next one out is the transliteration,
+    // unless only one of the two looks romanised (then that one is).
+    if(means.length>1&&LOOKS_ROMANISED.test(means[0])&&!LOOKS_ROMANISED.test(means[1])) means.unshift(...means.splice(0,2).reverse());
+    const [meaning="",...extra]=means;
+    add(grp.ar.join(" / "),meaning,[...notes,...extra].join(" · "),"Arabic",t);
+  };
+  const flush=()=>{ if(g&&(g.ar.length||g.en.length)) emit(g); g=null; };
+  const nextLine=i=>lines.slice(i+1).find(Boolean)||"";
+
+  for(let i=0;i<lines.length;i++){
+    const line=lines[i];
+    if(!line){ flush(); continue; }
+    const h=bulkHeader(line,nextLine(i),extraTopics)||bareHeader(lines,i,extraTopics);
+    if(h){
+      flush(); topic=h.topic;
+      if(h.isNew){ if(!created.includes(h.topic)) created.push(h.topic); }
+      else if(!categories.includes(h.topic)) categories.push(h.topic);
+      continue;
+    }
+    if(!arabic){                                   // no Arabic anywhere: "phrase - meaning - notes"
+      const [f,m="",...rest]=line.split(PART_SPLIT).map(x=>x.trim()).filter(Boolean);
+      if(f) add(f,m,rest.join(" · "),fallbackLang,topic);
+      continue;
+    }
+    const items=bulkRuns(line);
+    const ar=items.filter(x=>x.type==="ar").map(x=>x.text), en=items.filter(x=>x.type==="en").map(x=>x.text);
+    if(ar.length&&en.length){                      // both on one line: that line is the phrase
+      const firstAr=items.findIndex(x=>x.type==="ar"), lastEn=items.map(x=>x.type).lastIndexOf("en");
+      flush(); emit({ar,en,topic,enBefore:lastEn<firstAr}); continue;
+    }
+    if(ar.length){
+      if(g&&g.ar.length) flush();          // the previous phrase already has its Arabic: this starts the next
+      if(!g) g={ar:[],en:[],topic};
+      g.ar.push(...ar);
+      if(g.en.length){ g.enBefore=true; flush(); }   // English came first, so the pair is complete
+    }else if(en.length){
+      if(!g) g={ar:[],en:[],topic};
+      g.en.push(...en);                    // translation / transliteration lines follow their Arabic
+    }
+  }
+  flush();
+  return { rows, categories, created };
+}
+// ── end bulk paste ────────────────────────────────────────────────────────────
 
 const readAsDataUrl = file => new Promise((resolve,reject)=>{
   const r=new FileReader();
@@ -322,7 +522,7 @@ const readAsDataUrl = file => new Promise((resolve,reject)=>{
 // ── Phrase card ───────────────────────────────────────────────────────────────
 // One card, used by both the mobile swipe-stack and the desktop grid.
 function PhraseCard({ p, onEdit, onDelete, dense=false, className="", style={}, ...rest }) {
-  const lang = getLang(p.language), ml = masteryLevel(p), tc = getTopic(p.topic), ts = getTopicStyle(p.topic);
+  const lang = getLang(p.language), tag = statusTag(p), tc = getTopic(p.topic), ts = getTopicStyle(p.topic);
   const acc  = p.total_reviews>0 ? Math.round((p.good_reviews/p.total_reviews)*100) : null;
   // Arabic keeps its own script face; latin phrases take the condensed poster face (ref 4).
   const heroFont = lang.rtl ? lang.font : DISPLAY;
@@ -375,13 +575,13 @@ function PhraseCard({ p, onEdit, onDelete, dense=false, className="", style={}, 
                dangerouslySetInnerHTML={{__html:getTopicSvg(p.topic)}}/>
         </div>
 
-        {/* mastery sticker, opposite corner (ref 4's rotated stickers) */}
-        <div style={{position:"absolute",bottom:dense?18:24,[lang.rtl?"right":"left"]:dense?16:22,zIndex:2,
-                     transform:`rotate(${lang.rtl?7:-7}deg)`,background:MASTERY_COLORS[ml],border:outline(2),
+        {/* status sticker, opposite corner (ref 4's rotated stickers): New for 3 days, then mastery */}
+        {tag&&<div style={{position:"absolute",bottom:dense?18:24,[lang.rtl?"right":"left"]:dense?16:22,zIndex:2,
+                     transform:`rotate(${lang.rtl?7:-7}deg)`,background:tag.color,border:outline(2),
                      borderRadius:20,padding:dense?"3px 11px":"4px 14px",boxShadow:drop(2,2)}}>
           <span style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:dense?9:11,letterSpacing:.5,
-                        textTransform:"uppercase",color:INK,whiteSpace:"nowrap"}}>{MASTERY_LABELS[ml]}</span>
-        </div>
+                        textTransform:"uppercase",color:INK,whiteSpace:"nowrap"}}>{tag.label}</span>
+        </div>}
       </div>
 
       {/* ── Caption half: the translation, poster-footer style ── */}
@@ -411,6 +611,9 @@ function BiliG() {
   const [authSuccess, setAuthSuccess] = useState("");
   const isGuest = !!session?.guest;
   const isDesktop = useIsDesktop();
+  const [winH, setWinH] = useState(()=>window.innerHeight);
+  useEffect(()=>{ const h=()=>setWinH(window.innerHeight); window.addEventListener("resize",h); return()=>window.removeEventListener("resize",h); },[]);
+  const deckH = isDesktop ? Math.max(380, Math.min(500, winH-440)) : 480;
   const [seeding, setSeeding] = useState(false);
   const [libMode, setLibMode] = useState("deck"); // deck (swipeable) | grid — desktop only
   const deckMode = !isDesktop || libMode==="deck";
@@ -438,6 +641,12 @@ function BiliG() {
   const [linesBusy,    setLinesBusy]    = useState(false);
   const scanSeq = useRef(0);
   const [imgPreview,   setImgPreview]   = useState(null);
+  const [bulkText,     setBulkText]     = useState("");   // pasted list
+  const [bulkRows,     setBulkRows]     = useState([]);   // review list once split
+  const [bulkNote,     setBulkNote]     = useState("");
+  const [bulkBusy,     setBulkBusy]     = useState(false);
+  const [bulkExtra,    setBulkExtra]    = useState([]);   // categories added on the review screen that no phrase uses yet
+  const [catDraft,     setCatDraft]     = useState(null); // category being renamed / added: {mode:"rename"|"add"|"row", from?, key?, value}
   const [langOpen,     setLangOpen]     = useState(false);
   const [activeLang,   setActiveLang]   = useState("Arabic");
   // Swipe
@@ -517,6 +726,15 @@ function BiliG() {
   const topicCounts={};
   phrases.forEach(p=>{topicCounts[p.topic]=(topicCounts[p.topic]||0)+1;});
 
+  // The built-in categories plus any custom ones: those already on saved phrases, and any
+  // still being reviewed. Custom ones sit just before "Other".
+  const customTopicIds = useMemo(()=>{
+    const known=new Set(TOPICS.map(t=>t.id));
+    return [...new Set([...phrases.map(p=>p.topic),...bulkRows.map(r=>r.topic),...scanRows.map(r=>r.topic),...bulkExtra])].filter(t=>t&&!known.has(t)).sort();
+  },[phrases,bulkRows,scanRows,bulkExtra]);
+  const topicList = useMemo(()=>[...TOPICS.slice(0,-1),...customTopicIds.map(getTopic),TOPICS[TOPICS.length-1]],[customTopicIds]);
+  useEffect(()=>{ if(topicFilter!=="All"&&!topicList.some(t=>t.id===topicFilter)) setTopicFilter("All"); },[topicList,topicFilter]);
+
   // Filtered by BOTH active language and topic
   const filtered = useMemo(()=>phrases.filter(p=>{
     const langMatch = p.language === activeLang;
@@ -525,8 +743,8 @@ function BiliG() {
   }),[phrases, activeLang, topicFilter]);
 
   // CRUD
-  const openAdd  = ()=>{ setEditPhrase(null); setForm({foreign_text:"",native_text:"",language:activeLang,topic:"Greetings",notes:""}); setOcrResult(null); setImgPreview(null); setView("form"); };
-  const openEdit = p =>{ setEditPhrase(p); setForm({foreign_text:p.foreign_text,native_text:p.native_text,language:p.language,topic:p.topic,notes:p.notes||""}); setOcrResult(null); setImgPreview(null); setView("form"); };
+  const openAdd  = ()=>{ setEditPhrase(null); setForm({foreign_text:"",native_text:"",language:activeLang,topic:"Greetings",notes:""}); setImgPreview(null); setView("form"); };
+  const openEdit = p =>{ setEditPhrase(p); setForm({foreign_text:p.foreign_text,native_text:p.native_text,language:p.language,topic:p.topic,notes:p.notes||""}); setImgPreview(null); setView("form"); };
   const saveForm = async()=>{
     if(!form.foreign_text.trim()||!form.native_text.trim()){toast$("Both fields are required","error");return;}
     if(editPhrase){ await dbUpdate(editPhrase.id,{foreign_text:form.foreign_text,native_text:form.native_text,language:form.language,topic:form.topic,notes:form.notes}); toast$("Updated ✓"); }
@@ -550,7 +768,7 @@ function BiliG() {
     setTimeout(()=>{ if(cardIndex<cardDeck.length-1)setCardIndex(i=>i+1); else{toast$("Session complete! 🎉");setView("library");} },300);
   };
   deckLen.current = filtered.length;
-  const fcard=cardDeck[cardIndex], fcardLang=fcard?getLang(fcard.language):null;
+  const fcard=cardDeck[cardIndex], fcardLang=fcard?getLang(fcard.language):null, fcardTag=fcard?statusTag(fcard):null;
   const formLang=getLang(form.language);
 
   // ── Scan a photo → review → save ──
@@ -622,6 +840,53 @@ function BiliG() {
   };
   const cancelScan = ()=>{ scanSeq.current++; setScanRows([]); setScanLines([]); setImgPreview(null); setScanError(""); setScanNote(""); setScanBusy(false); setLinesBusy(false); setView("library"); };
 
+  // ── Paste many → review → save ──
+  const openBulk = ()=>{ setBulkText(""); setBulkRows([]); setBulkNote(""); setBulkExtra([]); setCatDraft(null); setView("bulk"); };
+  const splitBulk = ()=>{
+    const { rows, categories, created } = parseBulk(bulkText, activeLang!=="Arabic"?activeLang:"French", customTopicIds);
+    if(!rows.length){ setBulkNote("Nothing to split yet. Paste some phrases first."); return; }
+    const info=[];
+    if(categories.length) info.push(`Categories picked up from your headings: ${categories.map(id=>`${getTopic(id).icon} ${getTopic(id).label}`).join(", ")}. Each applies to the phrases beneath it.`);
+    if(created.length) info.push(`New ${created.length>1?"categories":"category"}: ${created.map(n=>`🏷️ ${n}`).join(", ")}. ${created.length>1?"They're":"It's"} created when you add these phrases.`);
+    setBulkNote(info.join(" ")); setBulkRows(rows);
+  };
+  const patchBulkRow = (key,patch)=>setBulkRows(rows=>rows.map(r=>r.key===key?{...r,...patch}:r));
+  // Editing the category list on the review screen. Typed names match a built-in (or an existing
+  // custom one) ignoring case; anything else becomes a new category.
+  const canonTopic = raw=>{ const t=String(raw||"").trim(); return t?(topicFromName(t,true,customTopicIds)||newTopicName(t)):""; };
+  const bulkTopicsInUse = [...new Set([...bulkRows.map(r=>r.topic),...bulkExtra])];
+  const commitCat = ()=>{
+    const d=catDraft; setCatDraft(null);
+    const name=d&&canonTopic(d.value);
+    if(!name) return;
+    if(d.mode==="rename"){
+      if(name===d.from) return;
+      setBulkRows(rows=>rows.map(r=>r.topic===d.from?{...r,topic:name}:r));   // its phrases move to the new name (merging if it exists)
+      setBulkExtra(x=>[...new Set(x.map(t=>t===d.from?name:t))]);
+    }else if(d.mode==="add"){
+      if(!TOPICS.some(t=>t.id===name)) setBulkExtra(x=>x.includes(name)?x:[...x,name]);
+    }else patchBulkRow(d.key,{topic:name});
+  };
+  const removeCat = t=>{ setBulkRows(rows=>rows.map(r=>r.topic===t?{...r,topic:"Other"}:r)); setBulkExtra(x=>x.filter(c=>c!==t)); };
+  const bulkKept = bulkRows.filter(r=>r.keep&&r.foreign_text.trim()&&r.native_text.trim());
+  const bulkIncomplete = bulkRows.filter(r=>r.keep&&!(r.foreign_text.trim()&&r.native_text.trim())).length;
+  const saveBulk = async()=>{
+    if(!bulkKept.length){ toast$("Nothing to add — each ticked phrase needs its text and meaning","error"); return; }
+    setBulkBusy(true);
+    for(const r of bulkKept){
+      await dbInsert({
+        foreign_text:r.foreign_text.trim(), native_text:r.native_text.trim(),
+        language:r.language, topic:r.topic, notes:(r.notes||"").trim(),
+        date:todayStr(), srs_reps:0, srs_interval:1, srs_next_review:null,
+        total_reviews:0, good_reviews:0, user_id:session.user?.id,
+      });
+    }
+    const n=bulkKept.length;
+    setActiveLang(bulkKept[0].language); setTopicFilter("All"); setStackIdx(0);
+    setBulkText(""); setBulkRows([]); setBulkNote(""); setBulkExtra([]); setCatDraft(null); setBulkBusy(false); setView("library");
+    toast$(`${n} phrase${n>1?"s":""} added ✓`);
+  };
+
   // Stack swipe
   const onTouchStart = e => { dragStart.current = e.touches[0].clientX; };
   const onTouchEnd   = e => {
@@ -639,7 +904,7 @@ function BiliG() {
   const onMouseLeave = ()=>{ isDragging.current=false; };
 
   const iSt={width:"100%",background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:12,padding:"12px 15px",color:T.ink,boxSizing:"border-box",transition:"border-color .2s,box-shadow .2s",fontFamily:"'DM Sans',sans-serif",fontSize:14};
-  const shell={width:"100%",maxWidth:isDesktop?1180:"none",marginLeft:"auto",marginRight:"auto"};
+  const shell={width:"100%",maxWidth:isDesktop?1260:"none",marginLeft:"auto",marginRight:"auto"};
   const pad =isDesktop?"0 40px":"0 22px";
   const lSt={display:"block",fontSize:9,letterSpacing:3,color:T.muted,fontFamily:"'Syne',sans-serif",textTransform:"uppercase",marginBottom:8};
 
@@ -738,20 +1003,28 @@ function BiliG() {
       {toast&&<div style={{position:"fixed",top:18,left:"50%",transform:"translateX(-50%)",background:toast.type==="error"?"#fee2e2":toast.type==="info"?"#ede9ff":"#f0fdf4",color:toast.type==="error"?"#991b1b":toast.type==="info"?T.lav:"#166534",padding:"9px 20px",borderRadius:30,zIndex:999,fontSize:13,fontFamily:"'DM Sans',sans-serif",boxShadow:"0 4px 24px rgba(0,0,0,.1)",animation:"fadeDown .25s ease",whiteSpace:"nowrap",border:`1px solid ${toast.type==="error"?"#fca5a5":toast.type==="info"?T.lavBorder:"#86efac"}`}}>{toast.msg}</div>}
 
       {/* ── HEADER ── */}
-      <div style={{...shell,position:"relative",zIndex:10,padding:isDesktop?"28px 40px 0":"18px 22px 0",display:"flex",alignItems:"center",justifyContent:"space-between",gap:16}}>
-        <div>
-          <div style={{fontFamily:"'Syne',sans-serif",fontSize:isDesktop?32:26,fontWeight:800,letterSpacing:"-1.5px",color:T.ink,lineHeight:1,display:"flex",alignItems:"baseline",gap:1}}>
-            bili<span style={{color:T.lav}}>G</span><span style={{width:6,height:6,borderRadius:"50%",background:T.pink,display:"inline-block",marginLeft:2,marginBottom:1,verticalAlign:"bottom"}}/>
-          </div>
+      <div style={{...shell,position:"relative",zIndex:10,padding:isDesktop?"26px 40px 0":"18px 22px 0",display:"grid",gridTemplateColumns:isDesktop?"1fr auto 1fr":"1fr auto",alignItems:"center",gap:16}}>
+        {isDesktop?(<>
           {/* Time-based greeting */}
-          <div style={{fontSize:11,color:T.muted,fontFamily:"'DM Sans',sans-serif",marginTop:3,letterSpacing:"-0.2px"}}>
+          <div style={{fontSize:13,color:T.muted,fontFamily:"'DM Sans',sans-serif",letterSpacing:"-0.2px"}}>
             {greeting}, <span style={{color:T.inkMid,fontWeight:500}}>{firstName}</span> 👋
-            {isGuest&&<span style={{marginLeft:7,fontSize:9,letterSpacing:1,textTransform:"uppercase",fontFamily:"'Syne',sans-serif",fontWeight:700,color:T.lav,background:T.lavLight,border:`1px solid ${T.lavBorder}`,borderRadius:20,padding:"2px 7px"}}>guest</span>}
           </div>
-        </div>
+          <div style={{fontFamily:"'Syne',sans-serif",fontSize:44,fontWeight:800,letterSpacing:"-2px",color:T.ink,lineHeight:1,display:"flex",alignItems:"baseline",gap:1}}>
+            bili<span style={{color:T.lav}}>G</span><span style={{width:9,height:9,borderRadius:"50%",background:T.pink,display:"inline-block",marginLeft:3,marginBottom:2,verticalAlign:"bottom"}}/>
+          </div>
+        </>):(
+          <div>
+            <div style={{fontFamily:"'Syne',sans-serif",fontSize:26,fontWeight:800,letterSpacing:"-1.5px",color:T.ink,lineHeight:1,display:"flex",alignItems:"baseline",gap:1}}>
+              bili<span style={{color:T.lav}}>G</span><span style={{width:6,height:6,borderRadius:"50%",background:T.pink,display:"inline-block",marginLeft:2,marginBottom:1,verticalAlign:"bottom"}}/>
+            </div>
+            <div style={{fontSize:11,color:T.muted,fontFamily:"'DM Sans',sans-serif",marginTop:3,letterSpacing:"-0.2px"}}>
+              {greeting}, <span style={{color:T.inkMid,fontWeight:500}}>{firstName}</span> 👋
+            </div>
+          </div>
+        )}
 
         {/* Lang dropdown */}
-        <div ref={langRef} style={{position:"relative"}}>
+        <div ref={langRef} style={{position:"relative",justifySelf:"end"}}>
           <button onClick={()=>setLangOpen(o=>!o)} style={{background:T.surface,border:outline(),borderRadius:30,padding:"8px 16px 8px 12px",color:INK,fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",gap:7,boxShadow:drop(3,3)}}>
             <span style={{fontSize:14}}>{getLang(activeLang).flag}</span>
             <span style={{color:T.ink,fontWeight:500,fontSize:12}}>{activeLang}</span>
@@ -784,60 +1057,39 @@ function BiliG() {
 
       {/* ══ LIBRARY ══ */}
       {view==="library"&&(
-        <div style={{...shell,padding:isDesktop?"22px 40px 60px":"14px 22px 140px",animation:"up .3s ease",position:"relative",zIndex:1}}>
+        <div style={{...shell,padding:isDesktop?"20px 40px 130px":"14px 22px 140px",animation:"up .3s ease",position:"relative",zIndex:1}}>
 
-          {/* Stats strip — plus the actions, which live inline on desktop */}
-          <div style={{display:"flex",gap:isDesktop?14:8,marginBottom:isDesktop?26:18,alignItems:"stretch",flexWrap:isDesktop?"wrap":"nowrap"}}>
+          {/* Stats */}
+          <div style={{display:"flex",gap:isDesktop?28:8,marginBottom:isDesktop?22:18,justifyContent:"center"}}>
             {[
-              {label:"streak",  val:streak,   sub:"d",           color:"#d2600c"},
-              {label:"mastered",val:mastered, sub:`/${phrases.filter(p=>p.language===activeLang).length}`, color:"#159750"},
-              {label:"accuracy",val:`${accuracy}%`,sub:`${totalRev}rev`,color:"#2258b8"},
+              {label:"streak",  val:streak,   sub:"day", color:"#d2600c"},
+              {label:"mastered",val:mastered, sub:`/ ${phrases.filter(p=>p.language===activeLang).length}`, color:"#159750"},
+              {label:"accuracy",val:`${accuracy}%`, sub:"", color:"#2258b8"},
             ].map(s=>(
-              <div key={s.label} style={{flex:isDesktop?"0 1 168px":"1 1 0",minWidth:0,background:T.surface,border:outline(),borderRadius:16,padding:isDesktop?"12px 14px":"10px",display:"flex",alignItems:"center",gap:isDesktop?10:7,boxShadow:drop(3,3)}}>
-                <StatIcon kind={s.label} size={isDesktop?42:34}/>
+              <div key={s.label} style={{flex:isDesktop?"0 1 250px":"1 1 0",minWidth:0,background:T.surface,border:outline(),borderRadius:isDesktop?18:16,padding:isDesktop?"16px 22px":"10px",display:"flex",alignItems:"center",gap:isDesktop?16:7,boxShadow:drop(3,3)}}>
+                <StatIcon kind={s.label} size={isDesktop?50:30}/>
                 <div style={{minWidth:0}}>
-                  <div style={{fontSize:isDesktop?17:14,fontWeight:700,color:T.ink,lineHeight:1,fontFamily:"'Syne',sans-serif",whiteSpace:"nowrap"}}>{s.val}<span style={{fontSize:9,color:T.muted,fontWeight:400,marginLeft:2}}>{s.sub}</span></div>
-                  <div style={{fontSize:8,color:s.color,fontFamily:"'Syne',sans-serif",letterSpacing:isDesktop?1:.3,textTransform:"uppercase",marginTop:2,whiteSpace:"nowrap"}}>{s.label}</div>
+                  <div style={{fontSize:isDesktop?22:14,fontWeight:700,color:T.ink,lineHeight:1,fontFamily:"'Syne',sans-serif",whiteSpace:"nowrap"}}>
+                    {s.val}{s.sub&&<span style={{fontSize:isDesktop?13:9,color:T.inkMid,fontWeight:600,marginLeft:4}}>{s.sub}</span>}
+                  </div>
+                  <div style={{fontSize:isDesktop?10:8,color:s.color,fontFamily:"'Syne',sans-serif",fontWeight:isDesktop?700:400,letterSpacing:isDesktop?1.5:.3,textTransform:"uppercase",marginTop:isDesktop?6:2,whiteSpace:"nowrap"}}>{s.label}</div>
                 </div>
               </div>
             ))}
-
-            {/* Desktop actions — no floating bar needed at this width */}
-            {isDesktop&&(
-              <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:10}}>
-                <button className="cth" onClick={()=>startPractice("due")}
-                  style={{background:dueCount>0?INK:T.surface,border:outline(),borderRadius:16,color:dueCount>0?"#fff":INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"13px 18px",display:"flex",alignItems:"center",gap:7,boxShadow:drop(4,4),cursor:"pointer"}}>
-                  <span>⚡</span><span>Review Due</span>
-                  {dueCount>0&&<span style={{background:"rgba(255,255,255,.15)",borderRadius:20,padding:"1px 8px",fontSize:11}}>{dueCount}</span>}
-                </button>
-                <button className="cth" onClick={()=>startPractice("all")}
-                  style={{background:T.surface,border:outline(),borderRadius:16,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"13px 18px",display:"flex",alignItems:"center",gap:7,boxShadow:drop(4,4),cursor:"pointer"}}>
-                  <span>🃏</span><span>Practice</span>
-                </button>
-                <button className="cth" onClick={()=>fileRef.current?.click()} title="Scan a photo for phrases"
-                  style={{background:T.surface,border:outline(),borderRadius:16,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"13px 18px",display:"flex",alignItems:"center",gap:7,boxShadow:drop(4,4),cursor:"pointer"}}>
-                  <span>📷</span><span>Scan</span>
-                </button>
-                <button className="cth" onClick={openAdd}
-                  style={{background:T.pink,border:outline(),borderRadius:16,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:13,padding:"13px 20px",display:"flex",alignItems:"center",gap:7,boxShadow:drop(4,4),cursor:"pointer"}}>
-                  <span style={{fontSize:17,lineHeight:1,fontWeight:300}}>+</span><span>Add phrase</span>
-                </button>
-              </div>
-            )}
           </div>
 
-          {/* Topic filter chips — wrap on desktop, scroll on mobile */}
-          <div style={{marginBottom:isDesktop?24:20}}>
-            <div className="tsc" style={{display:"flex",gap:isDesktop?9:7,paddingBottom:2,flexWrap:isDesktop?"wrap":"nowrap",overflowX:isDesktop?"visible":"auto"}}>
-              {TOPICS.map(t=>{
+          {/* Topic filter chips — one tight row that scrolls sideways */}
+          <div style={{marginBottom:isDesktop?16:20}}>
+            <div className="tsc" style={{display:"flex",gap:5,paddingBottom:isDesktop?6:2,flexWrap:"nowrap",overflowX:"auto",justifyContent:"flex-start",scrollbarWidth:isDesktop?"thin":"none"}}>
+              {topicList.map(t=>{
                 const active=topicFilter===t.id;
                 const count=t.id==="All"?phrases.filter(p=>p.language===activeLang).length:(phrases.filter(p=>p.language===activeLang&&p.topic===t.id).length);
                 return (
                   <div key={t.id} className="ph" onClick={()=>setTopicFilter(t.id)}
-                    style={{flexShrink:0,display:"flex",alignItems:"center",gap:5,padding:"6px 13px",borderRadius:30,background:active?INK:"transparent",border:`1px solid ${active?INK:T.borderMid}`,transition:"all .15s"}}>
-                    <span style={{fontSize:11,lineHeight:1,opacity:active?1:.65}}>{t.icon}</span>
-                    <span style={{fontSize:11,fontFamily:"'DM Sans',sans-serif",fontWeight:active?600:400,color:active?"#fff":T.inkMid,whiteSpace:"nowrap"}}>{t.label}</span>
-                    <sup style={{fontSize:7,color:active?"rgba(255,255,255,.55)":T.mutedLight,lineHeight:0,verticalAlign:"super",marginLeft:1}}>{count}</sup>
+                    style={{flexShrink:0,display:"flex",alignItems:"center",gap:isDesktop?5:4,padding:isDesktop?"7px 11px":"6px 10px",borderRadius:30,background:active?INK:"transparent",border:`1px solid ${active?INK:T.borderMid}`,transition:"all .15s"}}>
+                    <span style={{fontSize:isDesktop?14:11,lineHeight:1,opacity:active?1:.8}}>{t.icon}</span>
+                    <span style={{fontSize:isDesktop?13:11,fontFamily:"'DM Sans',sans-serif",fontWeight:active?700:500,color:active?"#fff":INK,whiteSpace:"nowrap"}}>{t.label}</span>
+                    <span style={{fontSize:isDesktop?10:7,color:active?"rgba(255,255,255,.6)":T.muted,marginLeft:isDesktop?2:1,fontFamily:"'DM Sans',sans-serif"}}>{count}</span>
                   </div>
                 );
               })}
@@ -893,11 +1145,13 @@ function BiliG() {
 
           {/* Deck — one card at a time, swipe or drag through it */}
           {filtered.length>0&&deckMode&&(
-            <div style={{position:"relative",height:isDesktop?500:480,maxWidth:isDesktop?520:"none",margin:"0 auto"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:isDesktop?40:0}}>
+            {isDesktop&&<DeckArrow dir="left" disabled={stackIdx===0} onClick={()=>setStackIdx(i=>Math.max(0,i-1))}/>}
+            <div style={{position:"relative",height:deckH,width:"100%",maxWidth:isDesktop?540:"none"}}>
               {[2,1].map(offset=>{
                 if(stackIdx+offset>=filtered.length)return null;
                 return (
-                  <div key={offset} aria-hidden="true" style={{position:"absolute",left:`${offset*3}%`,right:`${offset*3}%`,top:`${offset*11}px`,background:T.surfaceHi,borderRadius:26,height:isDesktop?462:440,border:outline(),opacity:offset===1?.9:.55,transform:`rotate(${offset===1?1.5:-1.2}deg)`,pointerEvents:"none"}}/>
+                  <div key={offset} aria-hidden="true" style={{position:"absolute",left:`${offset*3}%`,right:`${offset*3}%`,top:`${offset*11}px`,background:T.surfaceHi,borderRadius:26,height:deckH-40,border:outline(),opacity:offset===1?.9:.55,transform:`rotate(${offset===1?1.5:-1.2}deg)`,pointerEvents:"none"}}/>
                 );
               })}
               {filtered[stackIdx]&&(
@@ -908,16 +1162,12 @@ function BiliG() {
                   onMouseDown={onMouseDown} onMouseUp={onMouseUp} onMouseLeave={onMouseLeave}/>
               )}
             </div>
-          )}
-
-          {isDesktop&&deckMode&&filtered.length>1&&(
-            <div style={{textAlign:"center",fontSize:10,color:T.mutedLight,fontFamily:"'DM Sans',sans-serif",marginTop:14}}>
-              drag the card, or use ← →
+            {isDesktop&&<DeckArrow dir="right" disabled={stackIdx>=filtered.length-1} onClick={()=>setStackIdx(i=>Math.min(filtered.length-1,i+1))}/>}
             </div>
           )}
 
-          {/* Nav arrows + dots — deck only */}
-          {filtered.length>1&&deckMode&&(
+          {/* Mobile: arrows + dots under the card */}
+          {filtered.length>1&&deckMode&&!isDesktop&&(
             <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:14,marginTop:18}}>
               <button onClick={()=>setStackIdx(i=>Math.max(0,i-1))} disabled={stackIdx===0}
                 style={{background:T.surface,border:outline(),borderRadius:50,width:38,height:38,display:"flex",alignItems:"center",justifyContent:"center",cursor:stackIdx===0?"default":"pointer",opacity:stackIdx===0?.25:1,fontSize:14,color:INK,boxShadow:drop(2,2),transition:"opacity .2s",fontFamily:"'DM Sans',sans-serif"}}>←</button>
@@ -946,7 +1196,7 @@ function BiliG() {
               <div className="face" style={{position:"absolute",width:"100%",height:"100%",background:getTopicStyle(fcard?.topic).bg,border:outline(2.5),borderRadius:24,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,boxSizing:"border-box",boxShadow:drop(6,6)}}>
                 <div style={{fontFamily:SERIF,fontStyle:"italic",fontSize:15,color:"rgba(255,255,255,.9)",marginBottom:18}}>{fcard?.language} · {fcard?.topic}</div>
                 <div dir={fcardLang?.rtl?"rtl":"ltr"} style={{fontSize:fcardLang?.rtl?54:40,fontFamily:fcardLang?.rtl?fcardLang?.font:DISPLAY,textAlign:"center",lineHeight:fcardLang?.rtl?1.35:1,width:"100%",color:"#fff",fontWeight:fcardLang?.rtl?700:400,textShadow:"2px 2px 0 rgba(26,24,37,.28)"}}>{fcard?.foreign_text}</div>
-                <div style={{marginTop:20,fontSize:11,padding:"4px 14px",borderRadius:20,background:MASTERY_COLORS[masteryLevel(fcard||{})],color:INK,fontFamily:"'Syne',sans-serif",fontWeight:800,letterSpacing:.5,textTransform:"uppercase",border:outline(2),boxShadow:drop(2,2),transform:"rotate(-6deg)"}}>{MASTERY_LABELS[masteryLevel(fcard||{})]}</div>
+                {fcardTag&&<div style={{marginTop:20,fontSize:11,padding:"4px 14px",borderRadius:20,background:fcardTag.color,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:800,letterSpacing:.5,textTransform:"uppercase",border:outline(2),boxShadow:drop(2,2),transform:"rotate(-6deg)"}}>{fcardTag.label}</div>}
                 <div style={{marginTop:24,fontSize:10,color:"rgba(255,255,255,.65)",fontFamily:"'DM Sans',sans-serif"}}>tap to reveal</div>
               </div>
               <div className="face face-b" style={{position:"absolute",width:"100%",height:"100%",background:T.surface,border:outline(2.5),borderRadius:24,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,boxSizing:"border-box",boxShadow:drop(6,6)}}>
@@ -1025,7 +1275,7 @@ function BiliG() {
                         {LANGUAGES.map(l=><option key={l.name} value={l.name}>{l.flag} {l.name}</option>)}
                       </select>
                       <select value={r.topic} onChange={e=>patchScanRow(r.key,{topic:e.target.value})} aria-label="Topic" style={{...iSt,padding:"8px 10px",fontSize:12,flex:1}}>
-                        {TOPICS.filter(t=>t.id!=="All").map(t=><option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
+                        {topicList.filter(t=>t.id!=="All").map(t=><option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
                       </select>
                     </div>
                   </div>
@@ -1089,22 +1339,20 @@ function BiliG() {
 
           {!editPhrase&&(
             <div style={{marginBottom:22}}>
-              <label style={lSt}>📷 Scan a photo</label>
-              <div className="dz" style={{border:`2px dashed ${T.borderMid}`,borderRadius:14,padding:"16px",textAlign:"center",background:T.surface}}
-                   onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();startScan(e.dataTransfer.files[0]);}}>
-                <div style={{fontSize:12,color:T.muted,fontFamily:"'DM Sans',sans-serif",marginBottom:12}}>
-                  Point it at a page, sign or menu — every phrase it finds comes back for review.
-                </div>
-                <div style={{display:"flex",gap:9,justifyContent:"center",flexWrap:"wrap"}}>
-                  <button type="button" onClick={()=>camRef.current?.click()}
-                    style={{background:INK,border:outline(),borderRadius:12,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"10px 18px",cursor:"pointer",boxShadow:drop(3,3)}}>
-                    📸 Take photo
+              {/* Three ways in: a photo can also be dropped on this row */}
+              <div onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();startScan(e.dataTransfer.files[0]);}}
+                   style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+                {[
+                  {key:"snap",   icon:"📸", label:"Snap",   onClick:()=>camRef.current?.click(),  primary:true},
+                  {key:"upload", icon:"🖼", label:"Upload", onClick:()=>fileRef.current?.click()},
+                  {key:"paste",  icon:"📋", label:"Paste",  onClick:openBulk},
+                ].map(b=>(
+                  <button key={b.key} type="button" onClick={b.onClick}
+                    style={{background:b.primary?INK:T.surface,border:outline(),borderRadius:14,color:b.primary?"#fff":INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"14px 8px",cursor:"pointer",boxShadow:drop(3,3),display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:22,lineHeight:1}}>{b.icon}</span>
+                    <span>{b.label}</span>
                   </button>
-                  <button type="button" onClick={()=>fileRef.current?.click()}
-                    style={{background:T.surface,border:outline(),borderRadius:12,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"10px 18px",cursor:"pointer",boxShadow:drop(3,3)}}>
-                    🖼 Upload
-                  </button>
-                </div>
+                ))}
               </div>
               <div style={{display:"flex",alignItems:"center",gap:8,margin:"16px 0 4px"}}><div style={{flex:1,height:1,background:T.border}}/><span style={{fontSize:10,color:T.muted,fontFamily:"'DM Sans',sans-serif",whiteSpace:"nowrap"}}>or type one out</span><div style={{flex:1,height:1,background:T.border}}/></div>
             </div>
@@ -1131,7 +1379,7 @@ function BiliG() {
           <div style={{marginBottom:13}}>
             <label style={lSt}>Topic</label>
             <select value={form.topic} onChange={e=>setForm(p=>({...p,topic:e.target.value}))} style={iSt}>
-              {TOPICS.filter(t=>t.id!=="All").map(t=><option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
+              {topicList.filter(t=>t.id!=="All").map(t=><option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
             </select>
           </div>
 
@@ -1147,7 +1395,178 @@ function BiliG() {
         </div>
       )}
 
-      {/* ══ BOTTOM BAR — mobile only; desktop has the inline toolbar ══ */}
+      {/* ══ PASTE MANY ══ */}
+      {view==="bulk"&&(
+        <div style={{padding:isDesktop?`36px 40px ${bulkRows.length?140:60}px`:`20px 22px ${bulkRows.length?130:40}px`,animation:"up .3s ease",maxWidth:isDesktop?720:560,marginLeft:isDesktop?"auto":0,marginRight:isDesktop?"auto":0,position:"relative",zIndex:1}}>
+          <div style={{fontSize:9,letterSpacing:4,color:T.lav,fontFamily:"'Syne',sans-serif",textTransform:"uppercase",marginBottom:5}}>Paste many</div>
+          <div style={{fontSize:isDesktop?26:22,fontWeight:800,fontFamily:"'Syne',sans-serif",marginBottom:18,color:INK,letterSpacing:"-.8px"}}>
+            {bulkRows.length?`Review ${bulkRows.length} phrase${bulkRows.length>1?"s":""}`:"Paste your list"}
+          </div>
+
+          {!bulkRows.length?(<>
+            <div style={{fontSize:12,color:T.muted,fontFamily:SERIF,fontStyle:"italic",lineHeight:1.55,marginBottom:12}}>
+              One line is one phrase: the transliteration, the English, then the Arabic ("marhaban - Hello - مرحبا"), split by " - ", " / ", "--", a tab, "|" or brackets. Arabic first works too. A line like "Food:" or "# Travel" sets the category for the phrases below it. Nothing is saved until you've reviewed it.
+            </div>
+            <textarea value={bulkText} onChange={e=>setBulkText(e.target.value)} dir="auto" rows={isDesktop?12:9} autoFocus
+              placeholder={"marhaban - Hello - مرحبا\nsabah al-khayr - Good morning - صباح الخير\nshukran jazilan | Thank you so much | شكرا جزيلا"}
+              style={{...iSt,resize:"vertical",fontFamily:"'Scheherazade New','DM Sans',serif",fontSize:18,lineHeight:1.6}}/>
+            {bulkNote&&<div style={{fontSize:13,color:INK,background:"#fff4d6",border:outline(1.5),borderRadius:12,padding:"12px 14px",fontFamily:"'DM Sans',sans-serif",marginTop:12}}>{bulkNote}</div>}
+            <div style={{display:"flex",gap:10,marginTop:16,flexWrap:"wrap"}}>
+              <button onClick={splitBulk} disabled={!bulkText.trim()}
+                style={{flex:1,minWidth:180,background:INK,border:outline(),borderRadius:14,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:14,padding:"14px",cursor:"pointer",boxShadow:drop(4,4),opacity:bulkText.trim()?1:.5}}>Split into phrases</button>
+              <button onClick={()=>setView("form")}
+                style={{background:"transparent",border:`1px solid ${T.borderMid}`,borderRadius:14,color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:14,padding:"14px 18px",cursor:"pointer"}}>Back</button>
+            </div>
+          </>):(<>
+            <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:16}}>
+              <div style={{flex:1,minWidth:150,fontSize:12,color:T.muted,fontFamily:SERIF,fontStyle:"italic",lineHeight:1.5}}>
+                Untick anything you don't want and fix any wrong split. If the meaning and transliteration came out the wrong way round, use ⇄. Each phrase has its own category.
+                {bulkIncomplete>0&&<><br/><span style={{color:"#b45309",fontStyle:"normal",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>{bulkIncomplete} still need{bulkIncomplete===1?"s":""} a phrase or meaning.</span></>}
+              </div>
+              <button type="button" onClick={()=>setBulkRows(rows=>rows.map(r=>({...r,native_text:r.notes,notes:r.native_text})))} title="Swap meaning and transliteration on every phrase"
+                style={{...iSt,width:"auto",padding:"8px 10px",fontSize:12,flexShrink:0,cursor:"pointer"}}>⇄ Swap all</button>
+              <select value="" onChange={e=>{ const v=e.target.value; if(v) setBulkRows(rows=>rows.map(r=>({...r,topic:v}))); }} aria-label="Set the category of every phrase"
+                style={{...iSt,width:"auto",padding:"8px 10px",fontSize:12,flexShrink:0}}>
+                <option value="">Set all categories…</option>
+                {topicList.filter(t=>t.id!=="All").map(t=><option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
+              </select>
+            </div>
+
+            {bulkNote&&<div style={{fontSize:12,color:INK,background:T.lavLight,border:outline(1.5),borderRadius:12,padding:"10px 13px",fontFamily:"'DM Sans',sans-serif",marginBottom:14,lineHeight:1.5}}>{bulkNote}</div>}
+
+            <div style={{border:outline(),borderRadius:16,background:T.surface,boxShadow:drop(3,3),padding:"12px 14px",marginBottom:16}}>
+              <div style={{fontSize:9,letterSpacing:2.5,color:T.muted,fontFamily:"'Syne',sans-serif",fontWeight:700,textTransform:"uppercase",marginBottom:9}}>Categories in this list</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"center"}}>
+                {bulkTopicsInUse.map(t=>{
+                  const info=getTopic(t), n=bulkRows.filter(r=>r.topic===t).length;
+                  if(catDraft?.mode==="rename"&&catDraft.from===t) return (
+                    <input key={t} autoFocus value={catDraft.value} onChange={e=>setCatDraft({...catDraft,value:e.target.value})} onBlur={commitCat}
+                      onKeyDown={e=>{ if(e.key==="Enter") commitCat(); else if(e.key==="Escape") setCatDraft(null); }} aria-label={`Rename ${info.label}`}
+                      style={{...iSt,width:150,padding:"6px 10px",fontSize:12,borderRadius:20}}/>
+                  );
+                  return (
+                    <span key={t} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"5px 6px 5px 11px",borderRadius:20,background:T.surfaceHi,border:`1px solid ${T.borderMid}`,fontSize:12,fontFamily:"'DM Sans',sans-serif",color:INK}}>
+                      <span>{info.icon} {info.label}</span>
+                      <span style={{color:T.muted,fontSize:10}}>{n}</span>
+                      {t!=="Other"&&<>
+                        <button type="button" onClick={()=>setCatDraft({mode:"rename",from:t,value:info.label})} title="Rename — its phrases move to the new name" aria-label={`Rename ${info.label}`}
+                          style={{background:"none",border:"none",cursor:"pointer",fontSize:12,padding:"0 3px",color:T.inkMid}}>✎</button>
+                        <button type="button" onClick={()=>removeCat(t)} title="Remove — its phrases move to Other" aria-label={`Remove ${info.label}`}
+                          style={{background:"none",border:"none",cursor:"pointer",fontSize:12,padding:"0 4px 0 0",color:T.muted}}>✕</button>
+                      </>}
+                    </span>
+                  );
+                })}
+                {catDraft?.mode==="add"?(
+                  <input autoFocus value={catDraft.value} onChange={e=>setCatDraft({...catDraft,value:e.target.value})} onBlur={commitCat} placeholder="New category name"
+                    onKeyDown={e=>{ if(e.key==="Enter") commitCat(); else if(e.key==="Escape") setCatDraft(null); }} aria-label="New category name"
+                    style={{...iSt,width:170,padding:"6px 10px",fontSize:12,borderRadius:20}}/>
+                ):(
+                  <button type="button" onClick={()=>setCatDraft({mode:"add",value:""})}
+                    style={{padding:"6px 12px",borderRadius:20,background:"transparent",border:`1px dashed ${T.borderMid}`,fontSize:12,fontFamily:"'DM Sans',sans-serif",color:T.inkMid,cursor:"pointer"}}>＋ Add category</button>
+                )}
+              </div>
+            </div>
+
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+              <span style={{flex:1,fontSize:12,color:T.muted,fontFamily:"'DM Sans',sans-serif"}}>{bulkRows.filter(r=>r.keep).length} of {bulkRows.length} selected</span>
+              <button type="button" onClick={()=>setBulkRows(rows=>rows.map(r=>({...r,keep:true})))} disabled={bulkRows.every(r=>r.keep)}
+                style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:10,padding:"6px 12px",fontSize:12,fontFamily:"'DM Sans',sans-serif",fontWeight:600,color:INK,cursor:"pointer",opacity:bulkRows.every(r=>r.keep)?.45:1}}>Select all</button>
+              <button type="button" onClick={()=>setBulkRows(rows=>rows.map(r=>({...r,keep:false})))} disabled={!bulkRows.some(r=>r.keep)}
+                style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:10,padding:"6px 12px",fontSize:12,fontFamily:"'DM Sans',sans-serif",fontWeight:600,color:INK,cursor:"pointer",opacity:bulkRows.some(r=>r.keep)?1:.45}}>Deselect all</button>
+            </div>
+
+            {bulkRows.map(r=>{
+              const rl=getLang(r.language), noText=!r.foreign_text.trim(), noMeaning=!r.native_text.trim();
+              return (
+                <div key={r.key} style={{border:outline(),borderRadius:16,background:r.keep?T.surface:"transparent",boxShadow:r.keep?drop(3,3):"none",padding:"10px 12px",marginBottom:9,opacity:r.keep?1:.55,transition:"all .15s"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:r.keep?8:0}}>
+                    <input type="checkbox" checked={r.keep} onChange={e=>patchBulkRow(r.key,{keep:e.target.checked})}
+                      aria-label={`Keep ${r.foreign_text||r.native_text}`} style={{width:17,height:17,accentColor:INK,cursor:"pointer",flexShrink:0}}/>
+                    {r.keep?(
+                      <input value={r.foreign_text} onChange={e=>patchBulkRow(r.key,{foreign_text:e.target.value})}
+                        dir={rl.rtl?"rtl":"ltr"} placeholder="The phrase — needed to save" aria-label="Phrase"
+                        style={{...iSt,flex:1,minWidth:0,width:"auto",fontFamily:rl.font,fontSize:rl.rtl?20:14,textAlign:rl.rtl?"right":"left",padding:"8px 12px",borderColor:noText?"#e2a13c":undefined}}/>
+                    ):(
+                      <div dir={rl.rtl?"rtl":"ltr"} style={{flex:1,minWidth:0,fontFamily:rl.font,fontSize:rl.rtl?20:15,fontWeight:700,color:INK,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:rl.rtl?"right":"left"}}>{r.foreign_text||r.native_text||"—"}</div>
+                    )}
+                  </div>
+                  {r.keep&&(
+                    <div style={{display:"flex",flexDirection:"column",gap:8,paddingLeft:27}}>
+                      <div style={{display:"flex",gap:6}}>
+                        <input value={r.native_text} onChange={e=>patchBulkRow(r.key,{native_text:e.target.value})}
+                          placeholder="Meaning" aria-label="Meaning" style={{...iSt,flex:1,minWidth:0,width:"auto",padding:"8px 10px",fontSize:13,borderColor:noMeaning?"#e2a13c":undefined}}/>
+                        <button type="button" onClick={()=>patchBulkRow(r.key,{native_text:r.notes,notes:r.native_text})} title="Swap the meaning and the transliteration" aria-label="Swap meaning and transliteration"
+                          style={{flexShrink:0,background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:10,padding:"0 9px",fontSize:14,color:T.inkMid,cursor:"pointer"}}>⇄</button>
+                        <input value={r.notes} onChange={e=>patchBulkRow(r.key,{notes:e.target.value})}
+                          placeholder="Transliteration" aria-label="Transliteration or notes" style={{...iSt,flex:1,minWidth:0,width:"auto",padding:"8px 10px",fontSize:13}}/>
+                      </div>
+                      <div style={{display:"flex",gap:8}}>
+                        <select value={r.language} onChange={e=>patchBulkRow(r.key,{language:e.target.value})} aria-label="Language" style={{...iSt,padding:"8px 10px",fontSize:12,flex:1}}>
+                          {LANGUAGES.map(l=><option key={l.name} value={l.name}>{l.flag} {l.name}</option>)}
+                        </select>
+                        <select value={r.topic} onChange={e=>{ const v=e.target.value; if(v==="__new__") setCatDraft({mode:"row",key:r.key,value:""}); else patchBulkRow(r.key,{topic:v}); }} aria-label="Category" style={{...iSt,padding:"8px 10px",fontSize:12,flex:1}}>
+                          {topicList.filter(t=>t.id!=="All").map(t=><option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
+                          <option value="__new__">＋ New category…</option>
+                        </select>
+                      </div>
+                      {catDraft?.mode==="row"&&catDraft.key===r.key&&(
+                        <div style={{display:"flex",gap:8}}>
+                          <input autoFocus value={catDraft.value} onChange={e=>setCatDraft({...catDraft,value:e.target.value})} placeholder="New category name" aria-label="New category name"
+                            onKeyDown={e=>{ if(e.key==="Enter") commitCat(); else if(e.key==="Escape") setCatDraft(null); }} style={{...iSt,padding:"8px 12px",fontSize:12,flex:1}}/>
+                          <button type="button" onClick={commitCat} style={{flexShrink:0,background:INK,border:outline(1.5),borderRadius:12,color:"#fff",fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:12,padding:"0 14px",cursor:"pointer"}}>Add</button>
+                          <button type="button" onClick={()=>setCatDraft(null)} style={{flexShrink:0,background:"transparent",border:`1px solid ${T.borderMid}`,borderRadius:12,color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:12,padding:"0 12px",cursor:"pointer"}}>Cancel</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+          </>)}
+        </div>
+      )}
+
+      {/* Paste many — actions stay in view while you scroll the list */}
+      {view==="bulk"&&bulkRows.length>0&&(
+        <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:50,padding:isDesktop?"22px 40px 26px":"20px 22px 24px",background:`linear-gradient(to top,${T.bg} 72%,transparent 100%)`}}>
+          <div style={{maxWidth:isDesktop?640:516,margin:isDesktop?"0 auto":0,display:"flex",gap:10}}>
+            <button onClick={saveBulk} disabled={bulkBusy||!bulkKept.length}
+              style={{flex:1,background:INK,border:outline(),borderRadius:14,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:14,padding:"14px",cursor:"pointer",boxShadow:drop(4,4),opacity:bulkBusy||!bulkKept.length?.5:1}}>
+              {bulkBusy?"Adding…":`Add ${bulkKept.length} phrase${bulkKept.length===1?"":"s"}`}
+            </button>
+            <button onClick={()=>{ setBulkRows([]); setBulkNote(""); setCatDraft(null); }} disabled={bulkBusy}
+              style={{background:T.surface,border:outline(),borderRadius:14,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:14,padding:"14px 16px",cursor:"pointer",boxShadow:drop(3,3)}}>Edit text</button>
+            <button onClick={()=>setView("library")} disabled={bulkBusy}
+              style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:14,color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:14,padding:"14px 16px",cursor:"pointer"}}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* ══ BOTTOM BAR — desktop ══ */}
+      {view==="library"&&isDesktop&&(
+        <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:50,padding:"20px 40px 28px",background:`linear-gradient(to top,${T.bg} 65%,transparent 100%)`}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:18}}>
+            {[
+              {key:"practice", icon:"🃏", label:"Practice",   onClick:()=>startPractice("all"), bg:T.surface, fg:INK},
+              {key:"due",      icon:"⚡", label:"Review Due", onClick:()=>startPractice("due"), bg:INK,       fg:"#fff", badge:dueCount},
+              {key:"scan",     icon:"📷", label:"Scan",       onClick:()=>fileRef.current?.click(), bg:T.surface, fg:INK},
+              {key:"add",      icon:"+",  label:"Add phrase", onClick:openAdd,                  bg:T.pink,    fg:"#fff", strong:true},
+            ].map(b=>(
+              <button key={b.key} className="cth" onClick={b.onClick}
+                style={{background:b.bg,border:outline(2.5),borderRadius:18,color:b.fg,fontFamily:"'Syne',sans-serif",fontWeight:b.strong?800:700,fontSize:15,
+                        padding:"15px 28px",display:"flex",alignItems:"center",gap:10,boxShadow:drop(4,4),cursor:"pointer",whiteSpace:"nowrap"}}>
+                <span style={{fontSize:b.icon==="+"?22:17,lineHeight:1,fontWeight:400}}>{b.icon}</span>
+                <span>{b.label}</span>
+                {b.badge>0&&<span style={{background:"rgba(255,255,255,.16)",borderRadius:20,padding:"2px 9px",fontSize:12,fontFamily:"'DM Sans',sans-serif",fontWeight:700}}>{b.badge}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ══ BOTTOM BAR — mobile ══ */}
       {view==="library"&&!isDesktop&&(
         <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:50,padding:"12px 22px 28px",background:`linear-gradient(to top,${T.bg} 60%,transparent 100%)`}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:9}}>
