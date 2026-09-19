@@ -32,6 +32,15 @@ const VIEWER_SESSION = { viewer:true, user:{ id:"viewer", email:"" } };
 const PROGRESS_KEY = "bilig_viewer_progress";
 const progressRead  = () => { try{ const v=JSON.parse(localStorage.getItem(PROGRESS_KEY)); return v&&typeof v==="object"?v:{}; }catch{ return {}; } };
 const progressWrite = o => { try{ localStorage.setItem(PROGRESS_KEY,JSON.stringify(o)); }catch{} };
+// Landing from a password-recovery email: Supabase puts the tokens after the # in the address.
+// A dead or expired link comes back as #error=…&error_description=…
+const readRecovery = () => { try{
+  const h=new URLSearchParams(location.hash.replace(/^#/,""));
+  if(h.get("error")||h.get("error_code")) return { error:h.get("error_description")||"That link didn't work." };
+  if(h.get("type")==="recovery"&&h.get("access_token")) return { token:h.get("access_token"), refresh:h.get("refresh_token"), expires_in:Number(h.get("expires_in"))||3600 };
+}catch{}
+  return null; };
+const clearHash = () => { try{ history.replaceState(null,"",location.pathname+location.search); }catch{} };
 // A saved admin session, if it is a real login (never a visitor or, while login is off, a guest).
 const readStoredSession = () => { try{
   const v=JSON.parse(localStorage.getItem("bilig_s"));
@@ -119,7 +128,34 @@ function getGreeting() {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const getLang  = n  => LANGUAGES.find(l=>l.name===n)||LANGUAGES[0];
-const getTopic = id => TOPICS.find(t=>t.id===id)||(id?{id,label:id,icon:"🏷️"}:TOPICS[0]);   // an id not in TOPICS is a custom category
+// Picks an emoji for a custom category from what its name is about (first match wins). Anything
+// not recognised gets a plain tag. The same name always gets the same emoji, on every device.
+const TOPIC_EMOJI = [
+  [/\b(famil|relative|parent|mother|father|sibling)/,"👨‍👩‍👧"], [/\b(number|numeral|counting|digit|math)/,"🔢"],
+  [/\b(bod(y|ies)|anatomy|organ)/,"🧍"], [/\b(colou?r|shade)/,"🎨"], [/\b(bird)/,"🐦"], [/\b(fish|sea\b|ocean|marine)/,"🐟"],
+  [/\b(insect|bug)/,"🐛"], [/\b(animal|pet\b|pets\b|zoo|wildlife)/,"🐾"], [/\b(weather|climate|rain|storm|temperature)/,"🌦️"],
+  [/\b(season|autumn|winter|spring|summer)/,"🍂"], [/\b(ramadan|eid|mosque)/,"🌙"], [/\b(relig|prayer|pray|faith|god\b)/,"🙏"],
+  [/\b(time|clock|hour|minute|schedule)/,"⏰"], [/\b(days?\b|weeks?\b|months?\b|dates?\b|calendar)/,"📅"],
+  [/\b(work|job|office|business|career|profession|occupation|company)/,"💼"], [/\b(health|doctor|medic|hospital|pharmacy|illness|sick|dental)/,"🏥"],
+  [/\b(shop|market|store|buying|price|bargain|clothes shopping)/,"🛍️"], [/\b(money|bank|pay|payment|currency|cash|finance)/,"💰"],
+  [/\b(cloth|fashion|wear|outfit|shoe)/,"👕"], [/\b(house|home|room|furniture|kitchen|household|apartment|living)/,"🏠"],
+  [/\b(school|educat|study|class|universit|learn|homework|exam)/,"🎓"], [/\b(sport|exercise|gym|fitness|football|soccer|running)/,"⚽"],
+  [/\b(game|play|hobb|fun\b|toy)/,"🎮"], [/\b(music|song|instrument|singing|band)/,"🎵"], [/\b(movie|film|cinema|tv\b|television|theat)/,"🎬"],
+  [/\b(art\b|arts\b|paint|draw|design|museum)/,"🖼️"], [/\b(nature|plant|tree|flower|garden|outdoor|forest|mountain)/,"🌿"],
+  [/\b(tech|computer|internet|phone|digital|online|software|app\b)/,"💻"], [/\b(scien|physics|chemistry|biology|lab)/,"🔬"],
+  [/\b(direction|navigat|map\b|location|where|address|street)/,"🧭"], [/\b(transport|bus\b|train|car\b|driv|road|taxi|metro|traffic)/,"🚌"],
+  [/\b(flight|plane|airport|airline)/,"✈️"], [/\b(hotel|accommodation|stay|booking|hostel)/,"🏨"], [/\b(passport|visa|immigration|customs|border|document|official)/,"🛂"],
+  [/\b(law|legal|government|politic|court|election)/,"⚖️"], [/\b(emergenc|police|danger|help\b|safety|urgent|fire\b)/,"🚨"],
+  [/\b(restaurant|menu|caf[eé]|dining|meal|ordering)/,"🍽️"], [/\b(drink|beverage|coffee|tea\b|juice|water)/,"☕"], [/\b(fruit|vegetable|produce|grocer)/,"🍎"], [/\b(cook|recipe|kitchen|bak(e|ing)|meat|spice|ingredient)/,"🍳"],
+  [/\b(love|romanc|dating|relationship|wedding|marriage|couple)/,"❤️"], [/\b(friend|social|party|celebrat|holiday|festival|invitation|gift)/,"🎉"],
+  [/\b(news|media|newspaper|magazine|journal)/,"📰"], [/\b(book|read|literature|library|poem|story)/,"📚"], [/\b(writ|letter|email|mail|message|text)/,"✍️"],
+  [/\b(city|town|village|urban|neighbo)/,"🏙️"], [/\b(country|countries|nation|geograph|world|continent|culture|tradition)/,"🌍"],
+  [/\b(child|kid|baby|babies|teen|age\b)/,"🧒"], [/\b(person|people|personality|character|appearance|describ|adjective|opposite|quality)/,"🧑"],
+  [/\b(hygiene|bath|toilet|clean|beauty|hair|soap)/,"🧼"], [/\b(sleep|bed\b|night|dream|tired)/,"😴"],
+  [/\b(verb|grammar|sentence|conjunction|pronoun|preposition|connector|vocab|word|alphabet|letter)/,"🔤"],
+];
+const topicEmoji = name => { const n=String(name||"").toLowerCase(); const hit=TOPIC_EMOJI.find(([re])=>re.test(n)); return hit?hit[1]:"🏷️"; };
+const getTopic = id => TOPICS.find(t=>t.id===id)||(id?{id,label:id,icon:topicEmoji(id)}:TOPICS[0]);   // an id not in TOPICS is a custom category
 const todayStr = () => new Date().toISOString().slice(0,10);
 const isDue    = p  => !p.srs_next_review || Date.now() >= p.srs_next_review;
 const masteryLevel = p => { const r=p.srs_reps||0; return r===0?0:r<3?1:r<6?2:3; };
@@ -147,6 +183,14 @@ const buildStarters = (userId="guest") => STARTER_PHRASES.map((p,i)=>({
   srs_reps:0, srs_interval:1, srs_next_review:null, total_reviews:0, good_reviews:0,
   created_at:new Date(Date.now()-i*1000).toISOString(),
 }));
+// Phrases saved on this device in guest mode that are worth moving to the shared library: the
+// user's own, not the five starters the app seeds.
+const IMPORTED_KEY = "bilig_guest_imported";
+const deviceRowsToImport = () => {
+  const starters=new Set(STARTER_PHRASES.map(p=>`${p.foreign_text}|${p.native_text}`));
+  return guestRead().filter(r=>r&&String(r.foreign_text||"").trim()&&String(r.native_text||"").trim()&&!starters.has(`${r.foreign_text}|${r.native_text}`));
+};
+const deviceImported = () => { try{ return !!localStorage.getItem(IMPORTED_KEY); }catch{ return false; } };
 
 // ── Viewport ──────────────────────────────────────────────────────────────────
 const DESKTOP_Q = "(min-width: 760px)";
@@ -620,6 +664,11 @@ function BiliG() {
   // Auth
   const [session,     setSession]     = useState(()=>readStoredSession()||(LOGIN_ENABLED?null:VIEWER_SESSION));
   const [loginOpen,   setLoginOpen]   = useState(false);   // the admin login popup
+  const [recovery,    setRecovery]    = useState(readRecovery);   // arrived from a password-recovery email
+  const [newPw,       setNewPw]       = useState("");
+  const [newPw2,      setNewPw2]      = useState("");
+  const [recBusy,     setRecBusy]     = useState(false);
+  const [recError,    setRecError]    = useState("");
   const [authView,    setAuthView]    = useState("login");
   const [authEmail,   setAuthEmail]   = useState("");
   const [authPw,      setAuthPw]      = useState("");
@@ -663,6 +712,9 @@ function BiliG() {
   const [bulkRows,     setBulkRows]     = useState([]);   // review list once split
   const [bulkNote,     setBulkNote]     = useState("");
   const [bulkBusy,     setBulkBusy]     = useState(false);
+  const [deviceCount,  setDeviceCount]  = useState(0);     // phrases saved only on this device, waiting to be moved
+  const [deviceBusy,   setDeviceBusy]   = useState(false);
+  const [deviceHide,   setDeviceHide]   = useState(false);
   const [bulkExtra,    setBulkExtra]    = useState([]);   // categories added on the review screen that no phrase uses yet
   const [catDraft,     setCatDraft]     = useState(null); // category being renamed / added: {mode:"rename"|"add"|"row", from?, key?, value}
   const [langOpen,     setLangOpen]     = useState(false);
@@ -735,6 +787,30 @@ function BiliG() {
     else setAuthError(res.error_description||res.msg||"Something went wrong");
     setAuthLoading(false);
   };
+  const submitRecovery = async e=>{
+    e.preventDefault();
+    if(newPw.length<6){ setRecError("Use at least 6 characters."); return; }
+    if(newPw!==newPw2){ setRecError("The two passwords don't match."); return; }
+    setRecBusy(true); setRecError("");
+    const r=await fetch(`${SB_URL}/auth/v1/user`,{ method:"PUT",
+      headers:{ apikey:SB_KEY, Authorization:`Bearer ${recovery.token}`, "Content-Type":"application/json" },
+      body:JSON.stringify({ password:newPw }) }).then(x=>x.json()).catch(()=>({}));
+    if(r.id){                                        // updated: carry straight on, signed in
+      clearHash(); setNewPw(""); setNewPw2("");
+      setSession({ access_token:recovery.token, refresh_token:recovery.refresh, expires_at_ms:Date.now()+recovery.expires_in*1000, user:r });
+      setRecovery(null); toast$("Password updated. You're signed in ✓");
+    }else setRecError(r.msg||r.error_description||r.message||"Couldn't update the password. The link may have expired: request a new one.");
+    setRecBusy(false);
+  };
+  const sendRecovery = async()=>{
+    if(!authEmail.trim()){ setAuthError("Type your email above first."); return; }
+    setAuthLoading(true); setAuthError(""); setAuthSuccess("");
+    const back=location.protocol==="file:"?"":`?redirect_to=${encodeURIComponent(location.origin+location.pathname)}`;   // must be in Supabase's allowed redirect list
+    const res=await authFetch(`/recover${back}`,{email:authEmail.trim()}).catch(()=>({error:"network"}));
+    if(res&&(res.error||res.msg||res.error_code)) setAuthError(res.msg||res.error_description||"Couldn't send the email. Try again in a minute.");
+    else setAuthSuccess("If that email has an account, a reset link is on its way.");
+    setAuthLoading(false);
+  };
   const addStarters = async()=>{
     setSeeding(true);
     const rows=buildStarters(session?.user?.id||"guest");
@@ -787,10 +863,28 @@ function BiliG() {
   // CRUD
   const openAdd  = ()=>{ if(readOnly)return; setEditPhrase(null); setForm({foreign_text:"",native_text:"",language:activeLang,topic:"Greetings",notes:""}); setImgPreview(null); setView("form"); };
   // A visitor who taps an add button gets the admin login instead; signing in carries on to Add phrase.
+  useEffect(()=>{ setDeviceCount(session&&!session.viewer&&!session.guest&&!deviceImported()?deviceRowsToImport().length:0); },[session]);
+  // One request, so it either all lands or none of it does. The originals stay on this device as a backup.
+  const importDevice = async()=>{
+    setDeviceBusy(true);
+    const have=new Set(phrases.map(p=>`${p.language}|${p.foreign_text}`));
+    const body=deviceRowsToImport().filter(r=>!have.has(`${r.language}|${r.foreign_text}`)).map(r=>({
+      foreign_text:String(r.foreign_text).trim(), native_text:String(r.native_text).trim(), language:r.language||"Arabic", topic:r.topic||"Other", notes:r.notes||"",
+      date:r.date||todayStr(), srs_reps:r.srs_reps||0, srs_interval:r.srs_interval||1, srs_next_review:r.srs_next_review??null,
+      total_reviews:r.total_reviews||0, good_reviews:r.good_reviews||0, created_at:r.created_at||new Date().toISOString(), user_id:session.user.id,
+    }));
+    if(!body.length){ try{localStorage.setItem(IMPORTED_KEY,"1");}catch{} setDeviceCount(0); setDeviceBusy(false); toast$("Those phrases are already in the library","info"); return; }
+    const d=await sbFetch("/phrases",{method:"POST",headers:ah(),body:JSON.stringify(body)}).catch(()=>null);
+    if(Array.isArray(d)&&d.length){
+      setPhrases(prev=>[...d,...prev]); try{localStorage.setItem(IMPORTED_KEY,"1");}catch{}
+      setDeviceCount(0); toast$(`${d.length} phrase${d.length>1?"s":""} added to the shared library ✓`);
+    }else toast$("Couldn't add them — nothing was changed. Try signing in again.","error");
+    setDeviceBusy(false);
+  };
   const askAdmin = ()=>{ setAuthView("login"); setAuthError(""); setAuthSuccess(""); setAuthPw(""); setLoginOpen(true); };
   const tryAdd   = ()=>readOnly?askAdmin():openAdd();
   const tryScan  = ref=>readOnly?askAdmin():ref.current?.click();
-  useEffect(()=>{ if(!readOnly&&loginOpen){ setLoginOpen(false); openAdd(); } },[readOnly]);
+  useEffect(()=>{ if(!readOnly&&loginOpen){ setLoginOpen(false); if(deviceImported()||!deviceRowsToImport().length) openAdd(); } },[readOnly]);
   const openEdit = p =>{ if(readOnly)return; setEditPhrase(p); setForm({foreign_text:p.foreign_text,native_text:p.native_text,language:p.language,topic:p.topic,notes:p.notes||""}); setImgPreview(null); setView("form"); };
   const saveForm = async()=>{
     if(!form.foreign_text.trim()||!form.native_text.trim()){toast$("Both fields are required","error");return;}
@@ -894,7 +988,7 @@ function BiliG() {
     if(!rows.length){ setBulkNote("Nothing to split yet. Paste some phrases first."); return; }
     const info=[];
     if(categories.length) info.push(`Categories picked up from your headings: ${categories.map(id=>`${getTopic(id).icon} ${getTopic(id).label}`).join(", ")}. Each applies to the phrases beneath it.`);
-    if(created.length) info.push(`New ${created.length>1?"categories":"category"}: ${created.map(n=>`🏷️ ${n}`).join(", ")}. ${created.length>1?"They're":"It's"} created when you add these phrases.`);
+    if(created.length) info.push(`New ${created.length>1?"categories":"category"}: ${created.map(n=>`${topicEmoji(n)} ${n}`).join(", ")}. ${created.length>1?"They're":"It's"} created when you add these phrases.`);
     setBulkNote(info.join(" ")); setBulkRows(rows);
   };
   const patchBulkRow = (key,patch)=>setBulkRows(rows=>rows.map(r=>r.key===key?{...r,...patch}:r));
@@ -994,6 +1088,28 @@ function BiliG() {
   `;
 
   // ── AUTH SCREEN ────────────────────────────────────────────────────────────
+  if(recovery) return (
+    <div style={{minHeight:"100vh",background:T.bg,backgroundImage:GRID,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      <style>{css}</style>
+      <div style={{background:T.surface,border:outline(2.5),borderRadius:24,padding:"30px 26px",width:"100%",maxWidth:380,boxShadow:drop(6,6)}}>
+        <div style={{fontSize:9,letterSpacing:4,color:T.lav,fontFamily:"'Syne',sans-serif",textTransform:"uppercase",marginBottom:5}}>Admin</div>
+        {recovery.error?(<>
+          <div style={{fontSize:21,fontWeight:800,fontFamily:"'Syne',sans-serif",color:INK,letterSpacing:"-.6px",marginBottom:10}}>That link didn't work</div>
+          <div style={{fontSize:13,color:T.inkMid,fontFamily:"'DM Sans',sans-serif",lineHeight:1.55,marginBottom:18}}>{recovery.error} Reset links expire quickly and only work once. Go back, tap Add phrase, choose "Forgot password?" and try again.</div>
+          <button onClick={()=>{ clearHash(); setRecovery(null); }} style={{width:"100%",background:INK,border:outline(),borderRadius:14,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:14,padding:14,cursor:"pointer",boxShadow:drop(3,3)}}>Back to the app</button>
+        </>):(
+          <form onSubmit={submitRecovery} style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div style={{fontSize:21,fontWeight:800,fontFamily:"'Syne',sans-serif",color:INK,letterSpacing:"-.6px"}}>Set a new password</div>
+            <div><label style={lSt}>New password</label><input type="password" value={newPw} onChange={e=>setNewPw(e.target.value)} placeholder="min. 6 characters" required autoFocus style={iSt}/></div>
+            <div><label style={lSt}>Type it again</label><input type="password" value={newPw2} onChange={e=>setNewPw2(e.target.value)} placeholder="••••••••" required style={iSt}/></div>
+            {recError&&<div style={{fontSize:12,color:"#dc2626",background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:10,padding:"9px 12px"}}>{recError}</div>}
+            <button type="submit" disabled={recBusy} style={{background:INK,border:outline(),borderRadius:14,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:14,padding:14,cursor:"pointer",boxShadow:drop(3,3),opacity:recBusy?.6:1}}>{recBusy?"Saving…":"Save and sign in →"}</button>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+
   if(!session) return (
     <div style={{minHeight:"100vh",background:T.bg,backgroundImage:GRID,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
       <style>{css}</style>
@@ -1124,6 +1240,20 @@ function BiliG() {
               </div>
             ))}
           </div>
+
+          {/* Phrases saved only on this device: offer to move them into the shared library */}
+          {deviceCount>0&&!deviceHide&&(
+            <div style={{border:outline(),borderRadius:16,background:"#fff4d6",boxShadow:drop(3,3),padding:"14px 16px",marginBottom:18}}>
+              <div style={{fontSize:14,fontWeight:800,fontFamily:"'Syne',sans-serif",color:INK,marginBottom:4}}>📥 {deviceCount} phrase{deviceCount>1?"s are":" is"} saved only on this device</div>
+              <div style={{fontSize:12,color:T.inkMid,fontFamily:"'DM Sans',sans-serif",lineHeight:1.5,marginBottom:12}}>Add {deviceCount>1?"them":"it"} to the shared library so everyone can see {deviceCount>1?"them":"it"}. The copy on this device is kept as a backup.</div>
+              <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                <button onClick={importDevice} disabled={deviceBusy}
+                  style={{background:INK,border:outline(),borderRadius:12,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:13,padding:"11px 18px",cursor:"pointer",boxShadow:drop(3,3),opacity:deviceBusy?.6:1}}>{deviceBusy?"Adding…":`Add ${deviceCount} to the library`}</button>
+                <button onClick={()=>setDeviceHide(true)} disabled={deviceBusy}
+                  style={{background:"transparent",border:`1px solid ${T.borderMid}`,borderRadius:12,color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:13,padding:"11px 16px",cursor:"pointer"}}>Not now</button>
+              </div>
+            </div>
+          )}
 
           {/* Topic filter chips — one tight row that scrolls sideways */}
           <div style={{marginBottom:isDesktop?16:20}}>
@@ -1661,10 +1791,12 @@ function BiliG() {
             <div><label style={lSt}>Email</label><input type="email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="you@example.com" required autoFocus style={iSt}/></div>
             <div><label style={lSt}>Password</label><input type="password" value={authPw} onChange={e=>setAuthPw(e.target.value)} placeholder="••••••••" required style={iSt}/></div>
             {authError&&<div style={{fontSize:12,color:"#dc2626",background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:10,padding:"9px 12px"}}>{authError}</div>}
+            {authSuccess&&<div style={{fontSize:12,color:"#16a34a",background:"#f0fdf4",border:"1px solid #86efac",borderRadius:10,padding:"9px 12px"}}>{authSuccess}</div>}
             <div style={{display:"flex",gap:10}}>
               <button type="submit" disabled={authLoading} style={{flex:1,background:INK,border:outline(),borderRadius:14,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:14,padding:"13px",cursor:"pointer",boxShadow:drop(3,3),opacity:authLoading?.6:1}}>{authLoading?"…":"Log in →"}</button>
               <button type="button" onClick={()=>setLoginOpen(false)} style={{background:"transparent",border:`1px solid ${T.borderMid}`,borderRadius:14,color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:14,padding:"13px 16px",cursor:"pointer"}}>Cancel</button>
             </div>
+            <button type="button" onClick={sendRecovery} disabled={authLoading} style={{background:"none",border:"none",color:T.lav,fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600,cursor:"pointer",padding:0,textAlign:"left"}}>Forgot password?</button>
           </form>
         </div>
       )}
