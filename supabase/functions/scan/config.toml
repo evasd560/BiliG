@@ -1,0 +1,4 @@
+# Guests have no Supabase session, so the gateway must not demand a user JWT.
+# Flip this to true if you decide scanning should require a signed-in account.
+[functions.scan]
+verify_jwt = false

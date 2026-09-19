@@ -1,0 +1,1205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <title>biliG — Language Diary</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>"/>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=Scheherazade+New:wght@400;700&family=Anton&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; }
+    body { font-family: 'DM Sans', sans-serif; -webkit-font-smoothing: antialiased; background: #f5f4f0; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// ── Supabase ──────────────────────────────────────────────────────────────────
+const SB_URL = "https://lcuratltvfmzyvcziniz.supabase.co";
+const SB_KEY = "sb_publishable_Keq9agFjHd_wF1FxRx88_g_l4ZABVun";
+const sbFetch = (path, opts={}) => fetch(`${SB_URL}/rest/v1${path}`, {
+  headers:{ apikey:SB_KEY, "Content-Type":"application/json", Prefer:"return=representation", ...opts.headers },
+  ...opts }).then(r=>r.json());
+const authFetch = (path,body) => fetch(`${SB_URL}/auth/v1${path}`,{
+  method:"POST", headers:{apikey:SB_KEY,"Content-Type":"application/json"},
+  body:JSON.stringify(body)}).then(r=>r.json());
+
+// ── Guest mode (device-local storage, no account) ─────────────────────────────
+const GUEST_KEY  = "bilig_guest_phrases";
+const guestRead  = () => { try{ const v=JSON.parse(localStorage.getItem(GUEST_KEY)); return Array.isArray(v)?v:[]; }catch{ return []; } };
+const guestWrite = rows => { try{ localStorage.setItem(GUEST_KEY,JSON.stringify(rows)); }catch{} };
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const LANGUAGES = [
+  { name:"Arabic",  flag:"🇰🇼", rtl:true,  font:"'Scheherazade New',serif", cardBg:"#1a1825", accentBg:"#e05c9a" },
+  { name:"French",  flag:"🇫🇷", rtl:false, font:"Georgia,serif",            cardBg:"#1a1825", accentBg:"#e05c9a" },
+  { name:"Spanish", flag:"🇪🇸", rtl:false, font:"Georgia,serif",            cardBg:"#1a1825", accentBg:"#e05c9a" },
+];
+const TOPICS = [
+  { id:"All",         label:"All",         icon:"✦" },
+  { id:"Greetings",   label:"Greetings",   icon:"👋" },
+  { id:"Politeness",  label:"Politeness",  icon:"🌸" },
+  { id:"Questions",   label:"Questions",   icon:"❓" },
+  { id:"Emotions",    label:"Emotions",    icon:"💛" },
+  { id:"Expressions", label:"Expressions", icon:"💬" },
+  { id:"Food",        label:"Food",        icon:"🍽️" },
+  { id:"Travel",      label:"Travel",      icon:"✈️" },
+  { id:"Other",       label:"Other",       icon:"◎" },
+];
+const T = {
+  bg:"#faf3e8", surface:"#fffdf8", surfaceHi:"#f6efe2",
+  border:"rgba(26,24,37,0.12)", borderMid:"rgba(26,24,37,0.18)",
+  lav:"#7c6fcd", lavLight:"#ede9ff", lavBorder:"rgba(124,111,205,0.3)", lavSoft:"rgba(124,111,205,0.1)",
+  pink:"#e05c9a", dark:"#1a1825", ink:"#1a1825", inkMid:"#3d3a4f",
+  muted:"#8a8799", mutedLight:"#b8b5c8",
+};
+// Ink-outline system (refs 1 & 2): everything sits on a hard 2px stroke + offset shadow.
+const STROKE = 2, INK = "#1a1825";
+const outline = (w=STROKE)=>`${w}px solid ${INK}`;
+const drop    = (x=4,y=4)=>`${x}px ${y}px 0 ${INK}`;
+const DISPLAY = "'Anton',Impact,sans-serif";
+const SERIF   = "'Instrument Serif',Georgia,serif";
+
+// Per-subject colour + glossy 3D graphic (ref 3)
+const TOPIC_STYLE = {
+  Greetings:   { bg:"#2b4de0", a:"#ffd97a", b:"#f5a623", c:"#c9760a" },
+  Politeness:  { bg:"#e0518f", a:"#ffd6ea", b:"#ff8fc4", c:"#c93f7c" },
+  Questions:   { bg:"#6f5bd6", a:"#d9d0ff", b:"#a78bfa", c:"#6d4fd6" },
+  Emotions:    { bg:"#e2543c", a:"#ffc7ae", b:"#ff8a5c", c:"#c8452c" },
+  Expressions: { bg:"#178a8a", a:"#b9f5ee", b:"#5fd9c8", c:"#1f9b8a" },
+  Food:        { bg:"#e08a2b", a:"#ffe0a8", b:"#ffb04d", c:"#c96f12" },
+  Travel:      { bg:"#2f7fd8", a:"#c5e6ff", b:"#6fb8f5", c:"#2b6fc4" },
+  Other:       { bg:"#1a1825", a:"#e6e0ff", b:"#a99cf0", c:"#6f5bd6" },
+  All:         { bg:"#1a1825", a:"#e6e0ff", b:"#a99cf0", c:"#6f5bd6" },
+};
+const getTopicStyle = t => TOPIC_STYLE[t] || TOPIC_STYLE.Other;
+const MASTERY_LABELS = ["New","Learning","Review","Mastered"];
+const MASTERY_COLORS = ["#b8b5c8","#60a5fa","#fb923c","#22c55e"];
+const SRS_MULT = [1.0,2.5,4.0], SRS_DAYS = [1,4,10];
+const GRID = `url("data:image/svg+xml,%3Csvg width='32' height='32' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M 32 0 L 0 0 0 32' fill='none' stroke='%237c6fcd' stroke-opacity='0.07' stroke-width='0.5'/%3E%3C/svg%3E")`;
+
+// ── Time greeting ─────────────────────────────────────────────────────────────
+function getGreeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  if (h < 21) return "Good evening";
+  return "Good night";
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const getLang  = n  => LANGUAGES.find(l=>l.name===n)||LANGUAGES[0];
+const getTopic = id => TOPICS.find(t=>t.id===id)||TOPICS[0];
+const todayStr = () => new Date().toISOString().slice(0,10);
+const isDue    = p  => !p.srs_next_review || Date.now() >= p.srs_next_review;
+const masteryLevel = p => { const r=p.srs_reps||0; return r===0?0:r<3?1:r<6?2:3; };
+
+// ── Starter phrases (5 well-known ones, seeded so the diary is never empty) ────
+const STARTER_PHRASES = [
+  { foreign_text:"مرحبا",      native_text:"Hello",             language:"Arabic", topic:"Greetings",  notes:"marhaban — safe at any hour, with anyone" },
+  { foreign_text:"صباح الخير", native_text:"Good morning",      language:"Arabic", topic:"Greetings",  notes:"sabah al-khayr — literally 'morning of goodness'" },
+  { foreign_text:"من فضلك",    native_text:"Please",            language:"Arabic", topic:"Politeness", notes:"min fadlak to a man, min fadlik to a woman" },
+  { foreign_text:"شكرا جزيلا", native_text:"Thank you so much", language:"Arabic", topic:"Politeness", notes:"shukran jazilan — the reply is عفوا (afwan)" },
+  { foreign_text:"كيف حالك؟",  native_text:"How are you?",      language:"Arabic", topic:"Questions",  notes:"kayfa haluk — the standard opener after a greeting" },
+];
+const newLocalId = () => (crypto?.randomUUID?crypto.randomUUID():`g_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+const buildStarters = (userId="guest") => STARTER_PHRASES.map((p,i)=>({
+  ...p, id:newLocalId(), user_id:userId, date:todayStr(),
+  srs_reps:0, srs_interval:1, srs_next_review:null, total_reviews:0, good_reviews:0,
+  created_at:new Date(Date.now()-i*1000).toISOString(),
+}));
+
+// ── Viewport ──────────────────────────────────────────────────────────────────
+const DESKTOP_Q = "(min-width: 760px)";
+function useIsDesktop() {
+  const [big,setBig] = useState(()=>typeof window!=="undefined"&&window.matchMedia(DESKTOP_Q).matches);
+  useEffect(()=>{
+    const mq=window.matchMedia(DESKTOP_Q), h=e=>setBig(e.matches);
+    mq.addEventListener?mq.addEventListener("change",h):mq.addListener(h);
+    return ()=>{ mq.removeEventListener?mq.removeEventListener("change",h):mq.removeListener(h); };
+  },[]);
+  return big;
+}
+function calcNextReview(p,rating) {
+  const i=p.srs_interval||1, next=rating===0?SRS_DAYS[0]:Math.max(SRS_DAYS[rating],Math.round(i*SRS_MULT[rating]));
+  return { srs_interval:next, srs_next_review:Date.now()+next*86400000, srs_reps:rating===0?0:(p.srs_reps||0)+1, total_reviews:(p.total_reviews||0)+1, good_reviews:(p.good_reviews||0)+(rating>=1?1:0), last_reviewed:new Date().toISOString() };
+}
+function calcStreak(phrases) {
+  const dates=[...new Set(phrases.filter(p=>p.last_reviewed).map(p=>p.last_reviewed.slice(0,10)))].sort().reverse();
+  if(!dates.length)return 0;
+  const today=todayStr(),yest=new Date(Date.now()-86400000).toISOString().slice(0,10);
+  if(dates[0]!==today&&dates[0]!==yest)return 0;
+  let s=0,check=dates[0]===today?today:yest;
+  for(const d of dates){if(d===check){s++;check=new Date(new Date(check).getTime()-86400000).toISOString().slice(0,10);}else if(d<check)break;}
+  return s;
+}
+
+// ── Topic SVGs (minimal geometric line art) ───────────────────────────────────
+// ── Subject graphics ──────────────────────────────────────────────────────────
+// Soft glossy 3D shapes (ref 3): a radial body gradient plus a specular highlight.
+const glossDefs = (id,{a,b,c}) => `
+  <defs>
+    <radialGradient id="${id}-body" cx="34%" cy="26%" r="82%">
+      <stop offset="0%" stop-color="${a}"/><stop offset="52%" stop-color="${b}"/><stop offset="100%" stop-color="${c}"/>
+    </radialGradient>
+    <radialGradient id="${id}-core" cx="38%" cy="30%" r="78%">
+      <stop offset="0%" stop-color="#fff"/><stop offset="60%" stop-color="${a}"/><stop offset="100%" stop-color="${b}"/>
+    </radialGradient>
+    <linearGradient id="${id}-gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff" stop-opacity=".9"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>`;
+const spec = (id,cx,cy,rx,ry,rot=-28) =>
+  `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="url(#${id}-gloss)" transform="rotate(${rot} ${cx} ${cy})"/>`;
+
+const TOPIC_SVGS = {
+  // Six-petal bloom
+  Greetings: (id,p) => `${glossDefs(id,p)}
+    ${[0,60,120,180,240,300].map(a=>`<ellipse cx="100" cy="50" rx="27" ry="44" fill="url(#${id}-body)" transform="rotate(${a} 100 100)"/>`).join("")}
+    <circle cx="100" cy="100" r="25" fill="url(#${id}-core)"/>
+    ${spec(id,88,34,15,9)}`,
+  // Four-petal clover
+  Politeness: (id,p) => `${glossDefs(id,p)}
+    ${[0,90,180,270].map(a=>`<ellipse cx="100" cy="54" rx="35" ry="40" fill="url(#${id}-body)" transform="rotate(${a} 100 100)"/>`).join("")}
+    <circle cx="100" cy="100" r="22" fill="url(#${id}-core)"/>
+    ${spec(id,84,40,18,11)}`,
+  // Question mark
+  Questions: (id,p) => `${glossDefs(id,p)}
+    <path d="M62 68 Q62 30 102 30 Q146 30 146 70 Q146 100 112 114 L112 128"
+          fill="none" stroke="url(#${id}-body)" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="112" cy="163" r="17" fill="url(#${id}-core)"/>
+    ${spec(id,86,52,16,9,-40)}`,
+  // Puffy heart
+  Emotions: (id,p) => `${glossDefs(id,p)}
+    <path d="M100 168 C34 124 26 76 58 54 C82 38 100 56 100 72 C100 56 118 38 142 54 C174 76 166 124 100 168 Z" fill="url(#${id}-body)"/>
+    ${spec(id,72,72,20,13)}`,
+  // Speech bubble
+  Expressions: (id,p) => `${glossDefs(id,p)}
+    <rect x="26" y="38" width="148" height="106" rx="38" fill="url(#${id}-body)"/>
+    <path d="M62 138 L58 178 L98 142 Z" fill="url(#${id}-body)"/>
+    ${spec(id,72,64,24,13)}`,
+  // Donut
+  Food: (id,p) => `${glossDefs(id,p)}
+    <circle cx="100" cy="100" r="55" fill="none" stroke="url(#${id}-body)" stroke-width="36"/>
+    ${spec(id,68,58,20,11)}`,
+  // Paper plane
+  Travel: (id,p) => `${glossDefs(id,p)}
+    <path d="M172 34 L36 96 L88 112 Z" fill="url(#${id}-body)"/>
+    <path d="M172 34 L88 112 L104 166 Z" fill="url(#${id}-core)" opacity=".92"/>
+    ${spec(id,92,74,22,8,-24)}`,
+  // Sphere + squiggle
+  Other: (id,p) => `${glossDefs(id,p)}
+    <circle cx="94" cy="96" r="56" fill="url(#${id}-body)"/>
+    <path d="M32 162 Q62 138 92 162 Q122 186 152 162" fill="none" stroke="url(#${id}-core)" stroke-width="14" stroke-linecap="round"/>
+    ${spec(id,72,64,22,13)}`,
+};
+
+// Glossy 3D icons for the stat tiles
+const STAT_PALETTE = {
+  streak:   { a:"#ffd97a", b:"#f79a1f", c:"#d2600c" },
+  mastered: { a:"#c8f7cf", b:"#4ade80", c:"#159750" },
+  accuracy: { a:"#c5e6ff", b:"#5aa6ef", c:"#2258b8" },
+};
+const STAT_SVGS = {
+  // Flame
+  streak: (id,p) => `${glossDefs(id,p)}
+    <path d="M100 14 C124 58 158 78 158 118 C158 154 132 182 100 182 C68 182 42 154 42 118 C42 90 62 74 74 46 C81 72 93 83 101 73 C111 58 104 38 100 14 Z" fill="url(#${id}-body)"/>
+    <path d="M100 94 C113 112 128 122 128 140 C128 160 115 174 100 174 C85 174 72 160 72 140 C72 122 87 112 100 94 Z" fill="url(#${id}-core)"/>
+    ${spec(id,74,66,14,9,-30)}`,
+  // Star
+  mastered: (id,p) => `${glossDefs(id,p)}
+    <path d="M100 24 L119 74 L172 77 L130 110 L145 161 L100 132 L55 161 L70 110 L28 77 L81 74 Z" fill="url(#${id}-body)" stroke="url(#${id}-body)" stroke-width="14" stroke-linejoin="round"/>
+    ${spec(id,80,66,16,10)}`,
+  // Target
+  accuracy: (id,p) => `${glossDefs(id,p)}
+    <circle cx="100" cy="100" r="76" fill="url(#${id}-body)"/>
+    <circle cx="100" cy="100" r="48" fill="none" stroke="#fffdf8" stroke-width="12" opacity=".85"/>
+    <circle cx="100" cy="100" r="17" fill="url(#${id}-core)"/>
+    ${spec(id,72,66,24,15)}`,
+};
+const getStatSvg = k => STAT_SVGS[k](`st-${k}`, STAT_PALETTE[k]);
+
+function StatIcon({ kind, size }) {
+  return (
+    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"
+         style={{width:size,height:size,flexShrink:0,display:"block"}}
+         dangerouslySetInnerHTML={{__html:getStatSvg(kind)}}/>
+  );
+}
+
+function getTopicSvg(topic) {
+  const fn = TOPIC_SVGS[topic] || TOPIC_SVGS.Other;
+  // Gradient ids are namespaced per subject so repeated cards never collide.
+  return fn(`tg-${topic||"Other"}`, getTopicStyle(topic));
+}
+
+// ── Scanning ──────────────────────────────────────────────────────────────────
+// The model is reached through our own Supabase Edge Function (supabase/functions/scan),
+// which holds the Gemini key server-side. Nothing secret lives in this file.
+const SCAN_URL = `${SB_URL}/functions/v1/scan`;
+
+// Phrases + meanings from Gemini, via the Edge Function.
+async function scanImage(base64, mediaType, accessToken) {
+  let res;
+  try{
+    res = await fetch(SCAN_URL,{
+      method:"POST",
+      headers:{ "Content-Type":"application/json", apikey:SB_KEY, Authorization:`Bearer ${accessToken||SB_KEY}` },
+      body:JSON.stringify({image:base64, mediaType}),
+    });
+  }catch{
+    // A missing function 404s without CORS headers, which surfaces here as a network error.
+    throw new Error("Couldn't reach the scanning service.");
+  }
+  let data={}; try{ data=await res.json(); }catch{}
+  if(res.status===404) throw new Error("The scanning service isn't set up yet.");
+  if(!res.ok) throw new Error(data.error||`Scanning failed (${res.status}).`);
+  return {
+    phrases: Array.isArray(data.phrases)?data.phrases:[],
+    lines:   Array.isArray(data.raw_lines)?data.raw_lines.filter(l=>typeof l==="string"&&l.trim()):[],
+    notice:  typeof data.error==="string"?data.error:"",   // e.g. the image was blocked
+  };
+}
+
+// Plain text reading on the device (Tesseract), loaded only when first needed.
+// Needs no server and costs nothing, so a scan always shows what it read — even
+// when the scanning service is down or not deployed.
+const TESSERACT_SRC = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
+const OCR_LANG = { Arabic:"ara", French:"fra", Spanish:"spa" };
+let ocr = { langs:"", worker:null };
+
+const loadScript = src => new Promise((resolve,reject)=>{
+  if(window.Tesseract) return resolve();
+  const el=document.createElement("script");
+  el.src=src; el.onload=resolve; el.onerror=()=>reject(new Error("Couldn't load the text reader."));
+  document.head.appendChild(el);
+});
+async function getOcrWorker(langs){
+  if(ocr.langs===langs&&ocr.worker) return ocr.worker;
+  const previous=ocr.worker;
+  ocr={ langs, worker:Tesseract.createWorker(langs.split("+")) };   // stored as a promise so parallel scans share it
+  if(previous) previous.then(w=>w.terminate()).catch(()=>{});
+  return ocr.worker;
+}
+const cleanLines = text => [...new Set(
+  // Tesseract wraps RTL lines in invisible direction marks; strip them before they get saved into phrases
+  String(text||"").split(/\r?\n/).map(l=>l.replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g,"").replace(/\s+/g," ").trim()).filter(l=>l.length>1&&/\p{L}/u.test(l))
+)].slice(0,60);
+
+async function readTextOnDevice(dataUrl, language){
+  await loadScript(TESSERACT_SRC);
+  const worker = await getOcrWorker(`${OCR_LANG[language]||"ara"}+eng`);
+  const { data } = await worker.recognize(dataUrl);
+  return cleanLines(data.text);
+}
+
+// Phone photos are routinely 4-8MB; shrink before reading or uploading.
+async function shrinkImage(file, max=1600){
+  const src = await readAsDataUrl(file);
+  const img = await new Promise((resolve,reject)=>{ const i=new Image(); i.onload=()=>resolve(i); i.onerror=reject; i.src=src; });
+  const scale = Math.min(1, max/Math.max(img.naturalWidth,img.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(img.naturalWidth*scale); canvas.height = Math.round(img.naturalHeight*scale);
+  canvas.getContext("2d").drawImage(img,0,0,canvas.width,canvas.height);
+  const dataUrl = canvas.toDataURL("image/jpeg",.88);
+  return { dataUrl, base64:dataUrl.split(",")[1], mediaType:"image/jpeg" };
+}
+const isArabicScript = s => /\p{Script=Arabic}/u.test(s);
+
+const readAsDataUrl = file => new Promise((resolve,reject)=>{
+  const r=new FileReader();
+  r.onload=e=>resolve(e.target.result);
+  r.onerror=()=>reject(new Error("Could not read that file"));
+  r.readAsDataURL(file);
+});
+
+// ── Phrase card ───────────────────────────────────────────────────────────────
+// One card, used by both the mobile swipe-stack and the desktop grid.
+function PhraseCard({ p, onEdit, onDelete, dense=false, className="", style={}, ...rest }) {
+  const lang = getLang(p.language), ml = masteryLevel(p), tc = getTopic(p.topic), ts = getTopicStyle(p.topic);
+  const acc  = p.total_reviews>0 ? Math.round((p.good_reviews/p.total_reviews)*100) : null;
+  // Arabic keeps its own script face; latin phrases take the condensed poster face (ref 4).
+  const heroFont = lang.rtl ? lang.font : DISPLAY;
+  const len      = (p.foreign_text||"").length;
+  const shrink   = len>34 ? .52 : len>22 ? .64 : len>12 ? .78 : 1;
+  const heroSize = Math.round((lang.rtl ? (dense?42:66) : (dense?34:54)) * shrink);
+  const artW     = dense?96:124;
+  const artSide  = lang.rtl ? "left" : "right";   // opposite the reading edge
+
+  return (
+    <div className={className}
+      style={{borderRadius:dense?20:26,overflow:"hidden",background:T.surface,userSelect:"none",
+              border:outline(2.5),display:"flex",flexDirection:"column",...style}} {...rest}>
+
+      {/* ── Poster half: subject colour, kicker, hero phrase, framed graphic ── */}
+      <div style={{flex:"2.7 1 0",minHeight:0,background:ts.bg,position:"relative",overflow:"hidden",
+                   padding:dense?"14px 16px":"18px 22px",display:"flex",flexDirection:"column"}}>
+
+        {/* kicker + actions */}
+        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8,position:"relative",zIndex:3}}>
+          <div style={{fontFamily:SERIF,fontStyle:"italic",fontSize:dense?13:15,color:"rgba(255,255,255,.92)",lineHeight:1.2,minWidth:0}}>
+{p.language} · {tc.label}
+          </div>
+          <div className="card-actions" style={{display:"flex",gap:4,flexShrink:0}}>
+            {isDue(p)&&<span title="Due for review" style={{fontSize:10,padding:"2px 7px",borderRadius:20,background:"#ffd97a",color:INK,border:outline(1.5),fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>⚡</span>}
+            <button className="ib" aria-label="Edit phrase" onClick={e=>{e.stopPropagation();onEdit(p);}} style={{background:"rgba(255,255,255,.92)",border:outline(1.5),borderRadius:8,color:INK,padding:"2px 6px",fontSize:11,cursor:"pointer"}}>✏️</button>
+            <button className="ib" aria-label="Delete phrase" onClick={e=>{e.stopPropagation();onDelete(p.id);}} style={{background:"rgba(255,255,255,.92)",border:outline(1.5),borderRadius:8,color:INK,padding:"2px 6px",fontSize:11,cursor:"pointer"}}>🗑️</button>
+          </div>
+        </div>
+
+        {/* hero phrase */}
+        <div style={{position:"relative",zIndex:2,flex:1,display:"flex",alignItems:"flex-start",minHeight:0,overflow:"hidden",
+                     paddingTop:dense?10:14,paddingBottom:artW*0.61+(dense?10:14),
+                     paddingLeft:lang.rtl?artW*0.5:0,paddingRight:lang.rtl?0:artW*0.5}}>
+          <div dir={lang.rtl?"rtl":"ltr"}
+            style={{fontSize:heroSize,fontFamily:heroFont,lineHeight:lang.rtl?1.2:.94,
+                    textAlign:lang.rtl?"right":"left",color:"#fff",
+                    fontWeight:lang.rtl?700:400,letterSpacing:lang.rtl?0:"-.5px",
+                    width:"100%",overflowWrap:"anywhere",textShadow:"2px 2px 0 rgba(26,24,37,.28)"}}>
+            {p.foreign_text}
+          </div>
+        </div>
+
+        {/* framed subject graphic, tucked into the corner (ref 4's image block) */}
+        <div style={{position:"absolute",bottom:dense?12:16,[artSide]:dense?12:18,zIndex:2,
+                     width:artW,height:artW,background:"#fffdf8",border:outline(2.5),borderRadius:dense?14:16,
+                     boxShadow:drop(3,3),padding:dense?5:7,transform:`rotate(${lang.rtl?-3:3}deg)`}}>
+          <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"
+               style={{width:"100%",height:"100%",display:"block"}}
+               dangerouslySetInnerHTML={{__html:getTopicSvg(p.topic)}}/>
+        </div>
+
+        {/* mastery sticker, opposite corner (ref 4's rotated stickers) */}
+        <div style={{position:"absolute",bottom:dense?18:24,[lang.rtl?"right":"left"]:dense?16:22,zIndex:2,
+                     transform:`rotate(${lang.rtl?7:-7}deg)`,background:MASTERY_COLORS[ml],border:outline(2),
+                     borderRadius:20,padding:dense?"3px 11px":"4px 14px",boxShadow:drop(2,2)}}>
+          <span style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:dense?9:11,letterSpacing:.5,
+                        textTransform:"uppercase",color:INK,whiteSpace:"nowrap"}}>{MASTERY_LABELS[ml]}</span>
+        </div>
+      </div>
+
+      {/* ── Caption half: the translation, poster-footer style ── */}
+      <div style={{flex:"1.1 1 0",minHeight:0,background:T.surface,borderTop:outline(2.5),display:"flex",
+                   flexDirection:"column",justifyContent:"space-between",gap:6,
+                   padding:dense?"11px 16px 12px":"14px 22px 16px",overflow:"hidden"}}>
+        <div style={{minHeight:0,overflow:"hidden"}}>
+          <div style={{fontSize:9,letterSpacing:2.5,color:T.muted,fontFamily:"'Syne',sans-serif",fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Means</div>
+          <div style={{fontSize:dense?18:22,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:800,lineHeight:1.15,letterSpacing:"-.4px",overflowWrap:"anywhere"}}>{p.native_text}</div>
+          {p.notes&&<div style={{fontSize:dense?12:13,color:T.inkMid,fontFamily:SERIF,fontStyle:"italic",marginTop:6,lineHeight:1.35}}>{p.notes}</div>}
+        </div>
+        {acc!==null&&<div style={{fontSize:10,color:T.muted,fontFamily:"'DM Sans',sans-serif"}}>{acc}% correct · {p.total_reviews} reviews</div>}
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+function BiliG() {
+  // Auth
+  const [session,     setSession]     = useState(null);
+  const [authView,    setAuthView]    = useState("login");
+  const [authEmail,   setAuthEmail]   = useState("");
+  const [authPw,      setAuthPw]      = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError,   setAuthError]   = useState("");
+  const [authSuccess, setAuthSuccess] = useState("");
+  const isGuest = !!session?.guest;
+  const isDesktop = useIsDesktop();
+  const [seeding, setSeeding] = useState(false);
+  const [libMode, setLibMode] = useState("deck"); // deck (swipeable) | grid — desktop only
+  const deckMode = !isDesktop || libMode==="deck";
+
+  // App
+  const [phrases,      setPhrases]      = useState([]);
+  const [dbLoading,    setDbLoading]    = useState(false);
+  const [view,         setView]         = useState("library"); // library | flashcard | form | scan
+  const [stackIdx,     setStackIdx]     = useState(0);
+  const [topicFilter,  setTopicFilter]  = useState("All");
+  const [practiceMode, setPracticeMode] = useState("due");
+  const [editPhrase,   setEditPhrase]   = useState(null);
+  const [flipped,      setFlipped]      = useState(false);
+  const [showRating,   setShowRating]   = useState(false);
+  const [cardIndex,    setCardIndex]    = useState(0);
+  const [cardDeck,     setCardDeck]     = useState([]);
+  const [form,         setForm]         = useState({foreign_text:"",native_text:"",language:"Arabic",topic:"Greetings",notes:""});
+  const [delConfirm,   setDelConfirm]   = useState(null);
+  const [toast,        setToast]        = useState(null);
+  const [scanBusy,     setScanBusy]     = useState(false);
+  const [scanRows,     setScanRows]     = useState([]);   // review list
+  const [scanError,    setScanError]    = useState("");   // hard failure: photo unusable
+  const [scanNote,     setScanNote]     = useState("");   // soft: meanings unavailable, lines still usable
+  const [scanLines,    setScanLines]    = useState([]);   // every line of text read from the photo
+  const [linesBusy,    setLinesBusy]    = useState(false);
+  const scanSeq = useRef(0);
+  const [imgPreview,   setImgPreview]   = useState(null);
+  const [langOpen,     setLangOpen]     = useState(false);
+  const [activeLang,   setActiveLang]   = useState("Arabic");
+  // Swipe
+  const dragStart = useRef(0), isDragging = useRef(false), deckLen = useRef(0);
+
+  const toastRef=useRef(null), fileRef=useRef(null), camRef=useRef(null), langRef=useRef(null);
+
+  // Session
+  useEffect(()=>{const s=localStorage.getItem("bilig_s");if(s){try{setSession(JSON.parse(s));}catch{}}}, []);
+  useEffect(()=>{ if(session)localStorage.setItem("bilig_s",JSON.stringify(session)); else localStorage.removeItem("bilig_s"); },[session]);
+  useEffect(()=>{ if(session)loadPhrases(); },[session]);
+  useEffect(()=>{ const h=e=>{if(langRef.current&&!langRef.current.contains(e.target))setLangOpen(false);}; document.addEventListener("mousedown",h); return()=>document.removeEventListener("mousedown",h); },[]);
+  useEffect(()=>setStackIdx(0),[topicFilter, activeLang]);
+  // Arrow keys walk the deck (library only, so typing in the form is unaffected)
+  useEffect(()=>{
+    if(view!=="library"||!deckMode)return;
+    const h=e=>{
+      if(e.key==="ArrowRight")     setStackIdx(i=>Math.min(deckLen.current-1,i+1));
+      else if(e.key==="ArrowLeft") setStackIdx(i=>Math.max(0,i-1));
+    };
+    window.addEventListener("keydown",h);
+    return ()=>window.removeEventListener("keydown",h);
+  },[view,deckMode]);
+
+  const toast$ = (msg,type="success")=>{ clearTimeout(toastRef.current); setToast({msg,type}); toastRef.current=setTimeout(()=>setToast(null),3200); };
+  const ah = ()=>({Authorization:`Bearer ${session?.access_token}`});
+
+  // DB
+  const loadPhrases = async()=>{
+    if(isGuest){
+      let rows=guestRead();
+      let seeded=false; try{ seeded=!!localStorage.getItem("bilig_guest_seeded"); }catch{}
+      if(!rows.length&&!seeded){ rows=buildStarters("guest"); guestWrite(rows); try{localStorage.setItem("bilig_guest_seeded","1");}catch{} }
+      setPhrases(rows); return;
+    }
+    setDbLoading(true);
+    const data=await sbFetch("/phrases?order=created_at.desc",{headers:ah()});
+    if(Array.isArray(data)) setPhrases(data); else toast$("Could not load — check Supabase table","error");
+    setDbLoading(false);
+  };
+  const dbInsert = async row=>{
+    if(isGuest){ const r={...row,id:newLocalId(),created_at:new Date().toISOString()}; setPhrases(p=>{const n=[r,...p];guestWrite(n);return n;}); return; }
+    const d=await sbFetch("/phrases",{method:"POST",headers:ah(),body:JSON.stringify(row)}); if(Array.isArray(d)&&d[0])setPhrases(p=>[d[0],...p]); else toast$("Save failed","error"); };
+  const dbUpdate = async(id,patch)=>{
+    if(isGuest){ setPhrases(p=>{const n=p.map(x=>x.id===id?{...x,...patch}:x);guestWrite(n);return n;}); return; }
+    await sbFetch(`/phrases?id=eq.${id}`,{method:"PATCH",headers:ah(),body:JSON.stringify(patch)}); setPhrases(p=>p.map(x=>x.id===id?{...x,...patch}:x)); };
+  const dbDelete = async id=>{
+    if(isGuest){ setPhrases(p=>{const n=p.filter(x=>x.id!==id);guestWrite(n);return n;}); return; }
+    await sbFetch(`/phrases?id=eq.${id}`,{method:"DELETE",headers:ah()}); setPhrases(p=>p.filter(x=>x.id!==id)); };
+
+  // Auth
+  const handleAuth = async e=>{
+    e.preventDefault(); setAuthLoading(true); setAuthError(""); setAuthSuccess("");
+    const res=await authFetch(authView==="login"?"/token?grant_type=password":"/signup",{email:authEmail,password:authPw});
+    if(res.access_token) setSession({access_token:res.access_token,user:res.user});
+    else if(authView==="signup"&&res.id) setAuthSuccess("Check your email to confirm, then log in.");
+    else setAuthError(res.error_description||res.msg||"Something went wrong");
+    setAuthLoading(false);
+  };
+  const addStarters = async()=>{
+    setSeeding(true);
+    const rows=buildStarters(session?.user?.id||"guest");
+    if(isGuest) setPhrases(prev=>{ const n=[...rows,...prev]; guestWrite(n); return n; });
+    else for(const {id,created_at,...row} of rows) await dbInsert(row);
+    setActiveLang("Arabic"); setTopicFilter("All"); setStackIdx(0);
+    toast$("5 starter phrases added ✓"); setSeeding(false);
+  };
+  const enterGuest = ()=>{ setAuthError(""); setAuthSuccess(""); setSession({guest:true,user:{id:"guest",email:"guest"}}); };
+  const logout = ()=>{ setSession(null); setPhrases([]); };
+
+  // Derived
+  const streak   = calcStreak(phrases);
+  const dueCount = phrases.filter(isDue).length;
+  const mastered = phrases.filter(p=>masteryLevel(p)===3).length;
+  const totalRev = phrases.reduce((a,p)=>a+(p.total_reviews||0),0);
+  const accuracy = totalRev>0?Math.round((phrases.reduce((a,p)=>a+(p.good_reviews||0),0)/totalRev)*100):0;
+  const topicCounts={};
+  phrases.forEach(p=>{topicCounts[p.topic]=(topicCounts[p.topic]||0)+1;});
+
+  // Filtered by BOTH active language and topic
+  const filtered = useMemo(()=>phrases.filter(p=>{
+    const langMatch = p.language === activeLang;
+    const topicMatch = topicFilter==="All" || p.topic===topicFilter;
+    return langMatch && topicMatch;
+  }),[phrases, activeLang, topicFilter]);
+
+  // CRUD
+  const openAdd  = ()=>{ setEditPhrase(null); setForm({foreign_text:"",native_text:"",language:activeLang,topic:"Greetings",notes:""}); setOcrResult(null); setImgPreview(null); setView("form"); };
+  const openEdit = p =>{ setEditPhrase(p); setForm({foreign_text:p.foreign_text,native_text:p.native_text,language:p.language,topic:p.topic,notes:p.notes||""}); setOcrResult(null); setImgPreview(null); setView("form"); };
+  const saveForm = async()=>{
+    if(!form.foreign_text.trim()||!form.native_text.trim()){toast$("Both fields are required","error");return;}
+    if(editPhrase){ await dbUpdate(editPhrase.id,{foreign_text:form.foreign_text,native_text:form.native_text,language:form.language,topic:form.topic,notes:form.notes}); toast$("Updated ✓"); }
+    else{ await dbInsert({...form,date:todayStr(),srs_reps:0,srs_interval:1,srs_next_review:null,total_reviews:0,good_reviews:0,user_id:session.user?.id}); toast$("Phrase saved ✓"); }
+    setView("library");
+  };
+  const deletePhrase = async id=>{ await dbDelete(id); setDelConfirm(null); toast$("Deleted","info"); };
+
+  // SRS
+  const startPractice = mode=>{
+    const pool=mode==="due"?phrases.filter(isDue).sort(()=>Math.random()-.5):[...filtered].sort(()=>Math.random()-.5);
+    if(!pool.length){toast$(mode==="due"?"All caught up! 🎉":"No phrases yet","info");return;}
+    setPracticeMode(mode); setCardDeck(pool); setCardIndex(0); setFlipped(false); setShowRating(false); setView("flashcard");
+  };
+  const handleFlip=()=>{ if(!flipped){setFlipped(true);setShowRating(true);} };
+  const handleRating=async rating=>{
+    const p=cardDeck[cardIndex], patch=calcNextReview(p,rating);
+    await dbUpdate(p.id,patch);
+    setCardDeck(prev=>prev.map(c=>c.id===p.id?{...c,...patch}:c));
+    setFlipped(false); setShowRating(false);
+    setTimeout(()=>{ if(cardIndex<cardDeck.length-1)setCardIndex(i=>i+1); else{toast$("Session complete! 🎉");setView("library");} },300);
+  };
+  deckLen.current = filtered.length;
+  const fcard=cardDeck[cardIndex], fcardLang=fcard?getLang(fcard.language):null;
+  const formLang=getLang(form.language);
+
+  // ── Scan a photo → review → save ──
+  // Two readers run side by side: on-device text reading (always available, free)
+  // and the Gemini service (phrases with meanings). Whatever arrives is shown.
+  const startScan = useCallback(async file=>{
+    if(!file)return;
+    if(!file.type?.startsWith("image/")){ toast$("That file isn't an image","error"); return; }
+    const run=++scanSeq.current, current=()=>run===scanSeq.current;   // ignore results from a superseded scan
+    setScanError(""); setScanNote(""); setScanRows([]); setScanLines([]);
+    setScanBusy(true); setLinesBusy(true); setView("scan");
+
+    let img;
+    try{ img=await shrinkImage(file); }
+    catch{ if(current()){ setScanError("Couldn't open that photo. Try a JPEG or PNG."); setScanBusy(false); setLinesBusy(false); } return; }
+    if(!current())return;
+    setImgPreview(img.dataUrl);
+
+    readTextOnDevice(img.dataUrl, activeLang)
+      .then(lines=>{ if(current()) setScanLines(prev=>prev.length?prev:lines); })   // the service's reading wins if it landed first
+      .catch(()=>{})
+      .finally(()=>{ if(current()) setLinesBusy(false); });
+
+    try{
+      const { phrases, lines, notice } = await scanImage(img.base64, img.mediaType, session?.access_token);
+      if(!current())return;
+      if(lines.length) setScanLines(lines);
+      if(phrases.length) setScanRows(phrases.map((r,i)=>({
+        key:`${run}_${i}`, keep:true,
+        foreign_text:r.foreign_text||"", native_text:r.native_text||"",
+        language:LANGUAGES.some(l=>l.name===r.language)?r.language:activeLang,
+        topic:TOPICS.some(t=>t.id===r.topic&&t.id!=="All")?r.topic:"Other",
+        translated:!!r.translated,
+      })));
+      else setScanNote(notice||"No study phrases picked out. Add them from what it read below.");
+    }catch(err){
+      if(current()) setScanNote(`${err.message} Meanings aren't available, but you can add phrases from what it read and type the meaning.`);
+    }
+    if(current()) setScanBusy(false);
+  },[session, activeLang]);
+
+  // Turning read lines into phrases by hand
+  const addLineAsPhrase = line => setScanRows(rows=>[...rows,{
+    key:`line_${Date.now()}_${rows.length}`, keep:true, foreign_text:line, native_text:"",
+    language:isArabicScript(line)?"Arabic":(activeLang!=="Arabic"?activeLang:"French"),
+    topic:"Other", translated:false,
+  }]);
+  const meaningTarget = [...scanRows].reverse().find(r=>r.keep&&!r.native_text.trim());
+  const useLineAsMeaning = line => meaningTarget && setScanRows(rows=>rows.map(r=>r.key===meaningTarget.key?{...r,native_text:line,translated:false}:r));
+  const lineUsed = line => scanRows.some(r=>r.foreign_text===line||r.native_text===line);
+
+  const patchScanRow = (key,patch)=>setScanRows(rows=>rows.map(r=>r.key===key?{...r,...patch}:r));
+  const keptRows = scanRows.filter(r=>r.keep&&r.foreign_text.trim()&&r.native_text.trim());
+  const saveScan = async()=>{
+    if(!keptRows.length){ toast$("Nothing selected","error"); return; }
+    setScanBusy(true);
+    for(const r of keptRows){
+      await dbInsert({
+        foreign_text:r.foreign_text.trim(), native_text:r.native_text.trim(),
+        language:r.language, topic:r.topic, notes:"",
+        date:todayStr(), srs_reps:0, srs_interval:1, srs_next_review:null,
+        total_reviews:0, good_reviews:0, user_id:session.user?.id,
+      });
+    }
+    const n=keptRows.length;
+    setActiveLang(keptRows[0].language); setTopicFilter("All"); setStackIdx(0);
+    setScanRows([]); setScanLines([]); setScanNote(""); setImgPreview(null); setScanBusy(false); setView("library");
+    toast$(`${n} phrase${n>1?"s":""} added ✓`);
+  };
+  const cancelScan = ()=>{ scanSeq.current++; setScanRows([]); setScanLines([]); setImgPreview(null); setScanError(""); setScanNote(""); setScanBusy(false); setLinesBusy(false); setView("library"); };
+
+  // Stack swipe
+  const onTouchStart = e => { dragStart.current = e.touches[0].clientX; };
+  const onTouchEnd   = e => {
+    const d = dragStart.current - e.changedTouches[0].clientX;
+    if(d>50&&stackIdx<filtered.length-1) setStackIdx(i=>i+1);
+    else if(d<-50&&stackIdx>0) setStackIdx(i=>i-1);
+  };
+  const onMouseDown  = e => { isDragging.current=true; dragStart.current=e.clientX; };
+  const onMouseUp    = e => {
+    if(!isDragging.current)return; isDragging.current=false;
+    const d=dragStart.current-e.clientX;
+    if(d>40&&stackIdx<filtered.length-1) setStackIdx(i=>i+1);
+    else if(d<-40&&stackIdx>0) setStackIdx(i=>i-1);
+  };
+  const onMouseLeave = ()=>{ isDragging.current=false; };
+
+  const iSt={width:"100%",background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:12,padding:"12px 15px",color:T.ink,boxSizing:"border-box",transition:"border-color .2s,box-shadow .2s",fontFamily:"'DM Sans',sans-serif",fontSize:14};
+  const shell={width:"100%",maxWidth:isDesktop?1180:"none",marginLeft:"auto",marginRight:"auto"};
+  const pad =isDesktop?"0 40px":"0 22px";
+  const lSt={display:"block",fontSize:9,letterSpacing:3,color:T.muted,fontFamily:"'Syne',sans-serif",textTransform:"uppercase",marginBottom:8};
+
+  const css = `
+    *,*::before,*::after{box-sizing:border-box;}
+    @keyframes fadeDown{from{opacity:0;transform:translateX(-50%) translateY(-8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+    @keyframes up{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes pop{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+    @keyframes cardIn{from{opacity:0;transform:translateY(12px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @keyframes slideUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+    input:focus,textarea:focus,select:focus{outline:none!important;border-color:${T.lav}!important;box-shadow:0 0 0 3px ${T.lavSoft}!important;}
+    select option{background:#fff;color:${T.ink};}
+    ::-webkit-scrollbar{width:3px;height:3px;}::-webkit-scrollbar-thumb{background:${T.mutedLight};border-radius:4px;}
+    .nb{transition:color .15s;}.nb:hover{color:${T.lav}!important;}
+    .ib{transition:background .15s;cursor:pointer;}.ib:hover{background:rgba(0,0,0,.07)!important;}
+    .lr:hover{background:rgba(0,0,0,.04)!important;}
+    .ph{transition:all .15s;cursor:pointer;}
+    .tsc .ph:hover{border-color:${INK}!important;}
+    .rb{transition:all .15s;cursor:pointer;}.rb:hover{transform:translateY(-3px) scale(1.05);}
+    .cth{transition:all .2s;cursor:pointer;}.cth:hover{transform:translateY(-2px);}
+    .gcard{box-shadow:4px 4px 0 ${INK};transition:transform .18s ease,box-shadow .18s ease;}
+    .gcard:hover{transform:translate(-3px,-3px);box-shadow:8px 8px 0 ${INK};}
+    .gcard .card-actions{opacity:0;transition:opacity .18s;}
+    .gcard:hover .card-actions,.gcard:focus-within .card-actions{opacity:1;}
+    @media (hover:none){.gcard .card-actions{opacity:1;}}
+    @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important;}}
+    .flip-wrap{perspective:1400px;}
+    .flip-inner{transition:transform .5s cubic-bezier(.4,0,.2,1);transform-style:preserve-3d;position:relative;}
+    .flip-inner.on{transform:rotateY(180deg);}
+    .face{backface-visibility:hidden;-webkit-backface-visibility:hidden;}
+    .face-b{transform:rotateY(180deg);}
+    .dz{transition:border-color .2s,background .2s;}.dz:hover{border-color:${T.lav}!important;background:${T.lavLight}44!important;}
+    .blink{animation:blink 1.4s ease-in-out infinite;}
+    .tsc{overflow-x:auto;-ms-overflow-style:none;scrollbar-width:none;}.tsc::-webkit-scrollbar{display:none;}
+    .sp{width:16px;height:16px;border:2px solid rgba(124,111,205,.2);border-top-color:${T.lav};border-radius:50%;animation:spin .7s linear infinite;display:inline-block;}
+    .stack-card{animation:cardIn .35s cubic-bezier(.34,1.4,.64,1);}
+    .plus-fab{transition:transform .2s,box-shadow .2s;}.plus-fab:hover{transform:translateY(-3px) scale(1.07);box-shadow:0 14px 36px rgba(224,92,154,.4)!important;}
+  `;
+
+  // ── AUTH SCREEN ────────────────────────────────────────────────────────────
+  if(!session) return (
+    <div style={{minHeight:"100vh",background:T.bg,backgroundImage:GRID,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      <style>{css}</style>
+      <div style={{textAlign:"center",marginBottom:36}}>
+        <div style={{fontFamily:"'Syne',sans-serif",fontSize:46,fontWeight:800,letterSpacing:"-2px",color:T.ink,lineHeight:1}}>
+          bili<span style={{color:T.lav}}>G</span><span style={{width:9,height:9,borderRadius:"50%",background:T.pink,display:"inline-block",marginLeft:2,marginBottom:3,verticalAlign:"bottom"}}/>
+        </div>
+        <div style={{fontSize:10,letterSpacing:4,color:T.muted,fontFamily:"'Syne',sans-serif",textTransform:"uppercase",marginTop:8}}>Language Diary</div>
+      </div>
+      <div style={{background:T.surface,border:outline(2.5),borderRadius:24,padding:"32px 28px",width:"100%",maxWidth:380,boxShadow:drop(6,6)}}>
+        <div style={{display:"flex",background:T.surfaceHi,borderRadius:14,padding:4,marginBottom:28,gap:4}}>
+          {[["login","Log in"],["signup","Sign up"]].map(([v,l])=>(
+            <button key={v} onClick={()=>{setAuthView(v);setAuthError("");setAuthSuccess("");}}
+              style={{flex:1,background:authView===v?T.lav:"transparent",border:"none",borderRadius:11,padding:"9px",fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,color:authView===v?"#fff":T.muted,cursor:"pointer",transition:"all .2s"}}>
+              {l}
+            </button>
+          ))}
+        </div>
+        <form onSubmit={handleAuth} style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div><label style={lSt}>Email</label><input type="email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="you@example.com" required style={iSt}/></div>
+          <div><label style={lSt}>Password</label><input type="password" value={authPw} onChange={e=>setAuthPw(e.target.value)} placeholder={authView==="signup"?"min. 6 characters":"••••••••"} required style={iSt}/></div>
+          {authError&&<div style={{fontSize:12,color:"#dc2626",background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:10,padding:"9px 12px"}}>{authError}</div>}
+          {authSuccess&&<div style={{fontSize:12,color:"#16a34a",background:"#f0fdf4",border:"1px solid #86efac",borderRadius:10,padding:"9px 12px"}}>{authSuccess}</div>}
+          <button type="submit" disabled={authLoading} style={{background:T.lav,border:outline(),borderRadius:14,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:15,padding:15,cursor:"pointer",marginTop:4,boxShadow:drop(3,3),opacity:authLoading?.7:1}}>
+            {authLoading?"…":authView==="login"?"Log in →":"Create account →"}
+          </button>
+        </form>
+        <div style={{display:"flex",alignItems:"center",gap:10,margin:"18px 0 14px"}}>
+          <div style={{flex:1,height:1,background:T.border}}/>
+          <span style={{fontSize:9,letterSpacing:2,color:T.mutedLight,fontFamily:"'Syne',sans-serif",textTransform:"uppercase"}}>or</span>
+          <div style={{flex:1,height:1,background:T.border}}/>
+        </div>
+        <button type="button" onClick={enterGuest}
+          style={{width:"100%",background:T.surface,border:outline(),borderRadius:14,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:14,padding:14,cursor:"pointer",boxShadow:drop(3,3)}}>
+          Skip — continue as guest →
+        </button>
+        <div style={{marginTop:20,fontSize:11,color:T.muted,textAlign:"center",fontFamily:"'DM Sans',sans-serif",lineHeight:1.6}}>Your phrases are private and encrypted.<br/>Guest phrases stay on this device only.</div>
+      </div>
+    </div>
+  );
+
+  // ── MAIN APP ───────────────────────────────────────────────────────────────
+  const greeting = getGreeting();
+  const firstName = session.user?.email?.split("@")[0] || "";
+
+  return (
+    <div style={{minHeight:"100vh",background:T.bg,backgroundImage:GRID,color:T.ink,overflowX:"hidden",position:"relative"}}>
+      <style>{css}</style>
+
+      {/* Photo pickers — mounted once so any view can open them */}
+      <input ref={camRef}  type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{startScan(e.target.files[0]);e.target.value="";}}/>
+      <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{startScan(e.target.files[0]);e.target.value="";}}/>
+
+      {toast&&<div style={{position:"fixed",top:18,left:"50%",transform:"translateX(-50%)",background:toast.type==="error"?"#fee2e2":toast.type==="info"?"#ede9ff":"#f0fdf4",color:toast.type==="error"?"#991b1b":toast.type==="info"?T.lav:"#166534",padding:"9px 20px",borderRadius:30,zIndex:999,fontSize:13,fontFamily:"'DM Sans',sans-serif",boxShadow:"0 4px 24px rgba(0,0,0,.1)",animation:"fadeDown .25s ease",whiteSpace:"nowrap",border:`1px solid ${toast.type==="error"?"#fca5a5":toast.type==="info"?T.lavBorder:"#86efac"}`}}>{toast.msg}</div>}
+
+      {/* ── HEADER ── */}
+      <div style={{...shell,position:"relative",zIndex:10,padding:isDesktop?"28px 40px 0":"18px 22px 0",display:"flex",alignItems:"center",justifyContent:"space-between",gap:16}}>
+        <div>
+          <div style={{fontFamily:"'Syne',sans-serif",fontSize:isDesktop?32:26,fontWeight:800,letterSpacing:"-1.5px",color:T.ink,lineHeight:1,display:"flex",alignItems:"baseline",gap:1}}>
+            bili<span style={{color:T.lav}}>G</span><span style={{width:6,height:6,borderRadius:"50%",background:T.pink,display:"inline-block",marginLeft:2,marginBottom:1,verticalAlign:"bottom"}}/>
+          </div>
+          {/* Time-based greeting */}
+          <div style={{fontSize:11,color:T.muted,fontFamily:"'DM Sans',sans-serif",marginTop:3,letterSpacing:"-0.2px"}}>
+            {greeting}, <span style={{color:T.inkMid,fontWeight:500}}>{firstName}</span> 👋
+            {isGuest&&<span style={{marginLeft:7,fontSize:9,letterSpacing:1,textTransform:"uppercase",fontFamily:"'Syne',sans-serif",fontWeight:700,color:T.lav,background:T.lavLight,border:`1px solid ${T.lavBorder}`,borderRadius:20,padding:"2px 7px"}}>guest</span>}
+          </div>
+        </div>
+
+        {/* Lang dropdown */}
+        <div ref={langRef} style={{position:"relative"}}>
+          <button onClick={()=>setLangOpen(o=>!o)} style={{background:T.surface,border:outline(),borderRadius:30,padding:"8px 16px 8px 12px",color:INK,fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",gap:7,boxShadow:drop(3,3)}}>
+            <span style={{fontSize:14}}>{getLang(activeLang).flag}</span>
+            <span style={{color:T.ink,fontWeight:500,fontSize:12}}>{activeLang}</span>
+            <span style={{fontSize:8,color:T.muted}}>{langOpen?"▲":"▼"}</span>
+          </button>
+          {langOpen&&(
+            <div style={{position:"absolute",right:0,top:"calc(100% + 10px)",background:T.surface,border:outline(),borderRadius:16,padding:"6px",minWidth:172,zIndex:200,boxShadow:drop(4,4),animation:"pop .15s ease"}}>
+              {LANGUAGES.map(l=>(
+                <div key={l.name} className="lr" onClick={()=>{setActiveLang(l.name);setLangOpen(false);}}
+                  style={{display:"flex",alignItems:"center",gap:9,padding:"8px 10px",borderRadius:10,cursor:"pointer",transition:"background .12s",background:"transparent"}}>
+                  <span style={{fontSize:14}}>{l.flag}</span>
+                  <span style={{fontSize:13,fontFamily:"'DM Sans',sans-serif",color:activeLang===l.name?T.lav:T.ink,fontWeight:activeLang===l.name?600:400}}>{l.name}</span>
+                  {activeLang===l.name&&<span style={{marginLeft:"auto",color:T.lav,fontSize:12}}>✓</span>}
+                </div>
+              ))}
+              <div style={{borderTop:`1px solid ${T.border}`,marginTop:4,paddingTop:4}}>
+                {isGuest&&(
+                  <div className="lr" onClick={()=>{setLangOpen(false);setAuthView("signup");logout();}} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 10px",borderRadius:10,cursor:"pointer",transition:"background .12s",background:"transparent"}}>
+                    <span>✨</span><span style={{fontSize:12,fontFamily:"'DM Sans',sans-serif",color:T.lav,fontWeight:600}}>Sign up to sync</span>
+                  </div>
+                )}
+                <div className="lr" onClick={logout} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 10px",borderRadius:10,cursor:"pointer",transition:"background .12s",background:"transparent"}}>
+                  <span>🚪</span><span style={{fontSize:12,fontFamily:"'DM Sans',sans-serif",color:T.muted}}>{isGuest?"Exit guest mode":"Log out"}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ══ LIBRARY ══ */}
+      {view==="library"&&(
+        <div style={{...shell,padding:isDesktop?"22px 40px 60px":"14px 22px 140px",animation:"up .3s ease",position:"relative",zIndex:1}}>
+
+          {/* Stats strip — plus the actions, which live inline on desktop */}
+          <div style={{display:"flex",gap:isDesktop?14:8,marginBottom:isDesktop?26:18,alignItems:"stretch",flexWrap:isDesktop?"wrap":"nowrap"}}>
+            {[
+              {label:"streak",  val:streak,   sub:"d",           color:"#d2600c"},
+              {label:"mastered",val:mastered, sub:`/${phrases.filter(p=>p.language===activeLang).length}`, color:"#159750"},
+              {label:"accuracy",val:`${accuracy}%`,sub:`${totalRev}rev`,color:"#2258b8"},
+            ].map(s=>(
+              <div key={s.label} style={{flex:isDesktop?"0 1 168px":"1 1 0",minWidth:0,background:T.surface,border:outline(),borderRadius:16,padding:isDesktop?"12px 14px":"10px",display:"flex",alignItems:"center",gap:isDesktop?10:7,boxShadow:drop(3,3)}}>
+                <StatIcon kind={s.label} size={isDesktop?42:34}/>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:isDesktop?17:14,fontWeight:700,color:T.ink,lineHeight:1,fontFamily:"'Syne',sans-serif",whiteSpace:"nowrap"}}>{s.val}<span style={{fontSize:9,color:T.muted,fontWeight:400,marginLeft:2}}>{s.sub}</span></div>
+                  <div style={{fontSize:8,color:s.color,fontFamily:"'Syne',sans-serif",letterSpacing:isDesktop?1:.3,textTransform:"uppercase",marginTop:2,whiteSpace:"nowrap"}}>{s.label}</div>
+                </div>
+              </div>
+            ))}
+
+            {/* Desktop actions — no floating bar needed at this width */}
+            {isDesktop&&(
+              <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:10}}>
+                <button className="cth" onClick={()=>startPractice("due")}
+                  style={{background:dueCount>0?INK:T.surface,border:outline(),borderRadius:16,color:dueCount>0?"#fff":INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"13px 18px",display:"flex",alignItems:"center",gap:7,boxShadow:drop(4,4),cursor:"pointer"}}>
+                  <span>⚡</span><span>Review Due</span>
+                  {dueCount>0&&<span style={{background:"rgba(255,255,255,.15)",borderRadius:20,padding:"1px 8px",fontSize:11}}>{dueCount}</span>}
+                </button>
+                <button className="cth" onClick={()=>startPractice("all")}
+                  style={{background:T.surface,border:outline(),borderRadius:16,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"13px 18px",display:"flex",alignItems:"center",gap:7,boxShadow:drop(4,4),cursor:"pointer"}}>
+                  <span>🃏</span><span>Practice</span>
+                </button>
+                <button className="cth" onClick={()=>fileRef.current?.click()} title="Scan a photo for phrases"
+                  style={{background:T.surface,border:outline(),borderRadius:16,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"13px 18px",display:"flex",alignItems:"center",gap:7,boxShadow:drop(4,4),cursor:"pointer"}}>
+                  <span>📷</span><span>Scan</span>
+                </button>
+                <button className="cth" onClick={openAdd}
+                  style={{background:T.pink,border:outline(),borderRadius:16,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:13,padding:"13px 20px",display:"flex",alignItems:"center",gap:7,boxShadow:drop(4,4),cursor:"pointer"}}>
+                  <span style={{fontSize:17,lineHeight:1,fontWeight:300}}>+</span><span>Add phrase</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Topic filter chips — wrap on desktop, scroll on mobile */}
+          <div style={{marginBottom:isDesktop?24:20}}>
+            <div className="tsc" style={{display:"flex",gap:isDesktop?9:7,paddingBottom:2,flexWrap:isDesktop?"wrap":"nowrap",overflowX:isDesktop?"visible":"auto"}}>
+              {TOPICS.map(t=>{
+                const active=topicFilter===t.id;
+                const count=t.id==="All"?phrases.filter(p=>p.language===activeLang).length:(phrases.filter(p=>p.language===activeLang&&p.topic===t.id).length);
+                return (
+                  <div key={t.id} className="ph" onClick={()=>setTopicFilter(t.id)}
+                    style={{flexShrink:0,display:"flex",alignItems:"center",gap:5,padding:"6px 13px",borderRadius:30,background:active?INK:"transparent",border:`1px solid ${active?INK:T.borderMid}`,transition:"all .15s"}}>
+                    <span style={{fontSize:11,lineHeight:1,opacity:active?1:.65}}>{t.icon}</span>
+                    <span style={{fontSize:11,fontFamily:"'DM Sans',sans-serif",fontWeight:active?600:400,color:active?"#fff":T.inkMid,whiteSpace:"nowrap"}}>{t.label}</span>
+                    <sup style={{fontSize:7,color:active?"rgba(255,255,255,.55)":T.mutedLight,lineHeight:0,verticalAlign:"super",marginLeft:1}}>{count}</sup>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Card count */}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+            <div style={{fontSize:9,color:T.muted,fontFamily:"'Syne',sans-serif",letterSpacing:1,textTransform:"uppercase",display:"flex",alignItems:"center",gap:8}}>
+              {dbLoading?<span className="sp"/>:`${filtered.length} phrase${filtered.length!==1?"s":""}`}
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              {filtered.length>0&&deckMode&&<div style={{fontSize:9,color:T.muted,fontFamily:"'DM Sans',sans-serif"}}>{stackIdx+1} / {filtered.length}</div>}
+              {isDesktop&&filtered.length>0&&(
+                <div style={{display:"flex",background:T.surfaceHi,border:outline(),borderRadius:12,padding:3,gap:3,boxShadow:drop(2,2)}}>
+                  {[["deck","🂠","Deck"],["grid","▦","Grid"]].map(([m,icon,label])=>(
+                    <button key={m} onClick={()=>setLibMode(m)} title={`${label} view`} aria-pressed={libMode===m}
+                      style={{display:"flex",alignItems:"center",gap:5,background:libMode===m?INK:"transparent",border:"none",borderRadius:9,padding:"5px 11px",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:11,color:libMode===m?"#fff":T.muted,transition:"all .15s"}}>
+                      <span style={{fontSize:11}}>{icon}</span><span>{label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── CARDS — the centre of the app ── */}
+          {filtered.length===0&&!dbLoading&&(
+            <div style={{textAlign:"center",padding:isDesktop?"80px 0":"60px 0",color:T.muted}}>
+              <div style={{fontSize:40,marginBottom:14}}>🌿</div>
+              <div style={{fontFamily:"'Syne',sans-serif",fontSize:isDesktop?21:17,fontWeight:700,color:T.ink,marginBottom:6}}>Start your diary</div>
+              <div style={{fontFamily:"'DM Sans',sans-serif",fontSize:13,color:T.muted,marginBottom:phrases.length?0:20}}>
+                {phrases.length?`No ${activeLang} phrases here yet`:"Add your first phrase, or begin with five common ones"}
+              </div>
+              {!phrases.length&&(
+                <button onClick={addStarters} disabled={seeding}
+                  style={{background:"#ffd97a",border:outline(),borderRadius:14,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:13,padding:"12px 22px",cursor:"pointer",boxShadow:drop(3,3),opacity:seeding?.6:1}}>
+                  {seeding?"adding…":"✨ Add 5 starter phrases"}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Grid — every card at once (desktop, opt-in) */}
+          {filtered.length>0&&!deckMode&&(
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(310px,1fr))",gap:22,alignItems:"stretch"}}>
+              {filtered.map(p=>(
+                <PhraseCard key={p.id} p={p} dense className="gcard" style={{height:404}}
+                  onEdit={openEdit} onDelete={setDelConfirm}/>
+              ))}
+            </div>
+          )}
+
+          {/* Deck — one card at a time, swipe or drag through it */}
+          {filtered.length>0&&deckMode&&(
+            <div style={{position:"relative",height:isDesktop?500:480,maxWidth:isDesktop?520:"none",margin:"0 auto"}}>
+              {[2,1].map(offset=>{
+                if(stackIdx+offset>=filtered.length)return null;
+                return (
+                  <div key={offset} aria-hidden="true" style={{position:"absolute",left:`${offset*3}%`,right:`${offset*3}%`,top:`${offset*11}px`,background:T.surfaceHi,borderRadius:26,height:isDesktop?462:440,border:outline(),opacity:offset===1?.9:.55,transform:`rotate(${offset===1?1.5:-1.2}deg)`,pointerEvents:"none"}}/>
+                );
+              })}
+              {filtered[stackIdx]&&(
+                <PhraseCard key={`${filtered[stackIdx].id}-${stackIdx}`} p={filtered[stackIdx]} className="stack-card"
+                  onEdit={openEdit} onDelete={setDelConfirm}
+                  style={{position:"absolute",inset:0,boxShadow:"0 24px 64px rgba(26,24,37,.22)",cursor:"grab"}}
+                  onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
+                  onMouseDown={onMouseDown} onMouseUp={onMouseUp} onMouseLeave={onMouseLeave}/>
+              )}
+            </div>
+          )}
+
+          {isDesktop&&deckMode&&filtered.length>1&&(
+            <div style={{textAlign:"center",fontSize:10,color:T.mutedLight,fontFamily:"'DM Sans',sans-serif",marginTop:14}}>
+              drag the card, or use ← →
+            </div>
+          )}
+
+          {/* Nav arrows + dots — deck only */}
+          {filtered.length>1&&deckMode&&(
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:14,marginTop:18}}>
+              <button onClick={()=>setStackIdx(i=>Math.max(0,i-1))} disabled={stackIdx===0}
+                style={{background:T.surface,border:outline(),borderRadius:50,width:38,height:38,display:"flex",alignItems:"center",justifyContent:"center",cursor:stackIdx===0?"default":"pointer",opacity:stackIdx===0?.25:1,fontSize:14,color:INK,boxShadow:drop(2,2),transition:"opacity .2s",fontFamily:"'DM Sans',sans-serif"}}>←</button>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap",justifyContent:"center",maxWidth:180}}>
+                {filtered.map((_,i)=><div key={i} onClick={()=>setStackIdx(i)} style={{width:i===stackIdx?16:5,height:5,borderRadius:5,background:i===stackIdx?T.dark:T.borderMid,transition:"all .25s",cursor:"pointer"}}/>)}
+              </div>
+              <button onClick={()=>setStackIdx(i=>Math.min(filtered.length-1,i+1))} disabled={stackIdx===filtered.length-1}
+                style={{background:T.surface,border:outline(),borderRadius:50,width:38,height:38,display:"flex",alignItems:"center",justifyContent:"center",cursor:stackIdx===filtered.length-1?"default":"pointer",opacity:stackIdx===filtered.length-1?.25:1,fontSize:14,color:INK,boxShadow:drop(2,2),transition:"opacity .2s",fontFamily:"'DM Sans',sans-serif"}}>→</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══ FLASHCARD ══ */}
+      {view==="flashcard"&&(
+        <div style={{...shell,padding:isDesktop?"32px 40px 60px":"20px 22px 120px",display:"flex",flexDirection:"column",alignItems:"center",animation:"up .3s ease",position:"relative",zIndex:1}}>
+          <div style={{width:"100%",maxWidth:isDesktop?540:460,display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+            <div style={{fontSize:9,color:T.muted,fontFamily:"'Syne',sans-serif",letterSpacing:1.5,textTransform:"uppercase"}}>{practiceMode==="due"?"⚡ Due":"🃏 All"} · {cardIndex+1}/{cardDeck.length}</div>
+            <button onClick={()=>setView("library")} className="nb" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontSize:12}}>✕ exit</button>
+          </div>
+          <div style={{width:"100%",maxWidth:isDesktop?540:460,height:3,background:T.border,borderRadius:2,marginBottom:28}}>
+            <div style={{height:"100%",borderRadius:2,background:`linear-gradient(90deg,${T.lav},${T.pink})`,width:`${((cardIndex+1)/cardDeck.length)*100}%`,transition:"width .4s ease"}}/>
+          </div>
+          <div className="flip-wrap" style={{width:"100%",maxWidth:isDesktop?540:460,height:isDesktop?330:275,cursor:"pointer"}} onClick={handleFlip}>
+            <div className={`flip-inner${flipped?" on":""}`} style={{width:"100%",height:"100%"}}>
+              <div className="face" style={{position:"absolute",width:"100%",height:"100%",background:getTopicStyle(fcard?.topic).bg,border:outline(2.5),borderRadius:24,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,boxSizing:"border-box",boxShadow:drop(6,6)}}>
+                <div style={{fontFamily:SERIF,fontStyle:"italic",fontSize:15,color:"rgba(255,255,255,.9)",marginBottom:18}}>{fcard?.language} · {fcard?.topic}</div>
+                <div dir={fcardLang?.rtl?"rtl":"ltr"} style={{fontSize:fcardLang?.rtl?54:40,fontFamily:fcardLang?.rtl?fcardLang?.font:DISPLAY,textAlign:"center",lineHeight:fcardLang?.rtl?1.35:1,width:"100%",color:"#fff",fontWeight:fcardLang?.rtl?700:400,textShadow:"2px 2px 0 rgba(26,24,37,.28)"}}>{fcard?.foreign_text}</div>
+                <div style={{marginTop:20,fontSize:11,padding:"4px 14px",borderRadius:20,background:MASTERY_COLORS[masteryLevel(fcard||{})],color:INK,fontFamily:"'Syne',sans-serif",fontWeight:800,letterSpacing:.5,textTransform:"uppercase",border:outline(2),boxShadow:drop(2,2),transform:"rotate(-6deg)"}}>{MASTERY_LABELS[masteryLevel(fcard||{})]}</div>
+                <div style={{marginTop:24,fontSize:10,color:"rgba(255,255,255,.65)",fontFamily:"'DM Sans',sans-serif"}}>tap to reveal</div>
+              </div>
+              <div className="face face-b" style={{position:"absolute",width:"100%",height:"100%",background:T.surface,border:outline(2.5),borderRadius:24,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,boxSizing:"border-box",boxShadow:drop(6,6)}}>
+                <div style={{fontSize:9,letterSpacing:2.5,color:T.muted,fontFamily:"'Syne',sans-serif",fontWeight:700,textTransform:"uppercase",marginBottom:14}}>Means</div>
+                <div style={{fontSize:30,textAlign:"center",color:INK,fontFamily:"'Syne',sans-serif",fontWeight:800,lineHeight:1.15,letterSpacing:"-.5px"}}>{fcard?.native_text}</div>
+                {fcard?.notes&&<div style={{marginTop:14,fontSize:14,color:T.inkMid,fontFamily:SERIF,fontStyle:"italic",textAlign:"center",lineHeight:1.4}}>{fcard.notes}</div>}
+              </div>
+            </div>
+          </div>
+          <div style={{marginTop:24,width:"100%",maxWidth:isDesktop?540:460,opacity:showRating?1:0,transform:showRating?"translateY(0)":"translateY(8px)",transition:"all .3s ease",pointerEvents:showRating?"auto":"none"}}>
+            <div style={{fontSize:9,color:T.muted,fontFamily:"'Syne',sans-serif",letterSpacing:2,textAlign:"center",marginBottom:10,textTransform:"uppercase"}}>How did you do?</div>
+            <div style={{display:"flex",gap:8}}>
+              {[{label:"Again",emoji:"😓",rating:0,color:"#dc2626",bg:"#fee2e2",bc:"#fca5a5",sub:"Tomorrow"},{label:"Good",emoji:"🙂",rating:1,color:"#ea580c",bg:"#fff7ed",bc:"#fdba74",sub:"Few days"},{label:"Easy",emoji:"🚀",rating:2,color:"#16a34a",bg:"#f0fdf4",bc:"#86efac",sub:"10+ days"}].map(({label,emoji,rating,color,bg,bc,sub})=>(
+                <button key={rating} className="rb" onClick={()=>handleRating(rating)} style={{flex:1,background:bg,border:outline(),borderRadius:16,padding:"13px 6px",display:"flex",flexDirection:"column",alignItems:"center",gap:4,boxShadow:drop(3,3),cursor:"pointer"}}>
+                  <span style={{fontSize:20}}>{emoji}</span>
+                  <span style={{fontSize:12,fontFamily:"'Syne',sans-serif",fontWeight:700,color}}>{label}</span>
+                  <span style={{fontSize:9,fontFamily:"'DM Sans',sans-serif",color:T.muted}}>{sub}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          {!showRating&&<div style={{marginTop:18,fontSize:10,color:T.mutedLight,fontFamily:"'DM Sans',sans-serif"}}>Tap the card to reveal</div>}
+        </div>
+      )}
+
+      {/* ══ SCAN REVIEW ══ */}
+      {view==="scan"&&(
+        <div style={{padding:isDesktop?"30px 40px 60px":"20px 22px 40px",animation:"up .3s ease",maxWidth:isDesktop?720:560,marginLeft:isDesktop?"auto":0,marginRight:isDesktop?"auto":0,position:"relative",zIndex:1}}>
+          <div style={{fontSize:9,letterSpacing:4,color:T.lav,fontFamily:"'Syne',sans-serif",textTransform:"uppercase",marginBottom:5}}>From your photo</div>
+          <div style={{fontSize:isDesktop?26:22,fontWeight:800,fontFamily:"'Syne',sans-serif",marginBottom:18,color:INK,letterSpacing:"-.8px"}}>
+            {scanRows.length?`Found ${scanRows.length} phrase${scanRows.length>1?"s":""}`
+              :(scanBusy||linesBusy)&&!scanLines.length?"Reading the photo…"
+              :scanLines.length?"Here's what it read":"Nothing found"}
+          </div>
+
+          {imgPreview&&(
+            <div style={{display:"flex",gap:14,alignItems:"flex-start",marginBottom:18}}>
+              <img src={imgPreview} alt="The photo you scanned" style={{width:96,height:96,objectFit:"cover",borderRadius:14,border:outline(),boxShadow:drop(3,3)}}/>
+              <div style={{fontSize:12,color:T.muted,fontFamily:SERIF,fontStyle:"italic",lineHeight:1.5,paddingTop:4}}>
+                Untick anything you don't want, fix any misread text, then add them to your diary.
+                <br/>✨ marks a meaning written by the scanner rather than read off the page.
+              </div>
+            </div>
+          )}
+
+          {scanBusy&&!scanRows.length&&(
+            <div className="blink" style={{fontSize:13,color:T.lav,fontFamily:"'DM Sans',sans-serif",padding:"4px 0 16px"}}>✨ Picking out phrases and meanings…</div>
+          )}
+
+          {scanError&&(
+            <div style={{fontSize:13,color:"#991b1b",background:"#fee2e2",border:outline(1.5),borderRadius:12,padding:"12px 14px",fontFamily:"'DM Sans',sans-serif",marginBottom:18}}>{scanError}</div>
+          )}
+          {scanNote&&!scanError&&(
+            <div style={{fontSize:13,color:INK,background:"#fff4d6",border:outline(1.5),borderRadius:12,padding:"12px 14px",fontFamily:"'DM Sans',sans-serif",marginBottom:18,lineHeight:1.45}}>{scanNote}</div>
+          )}
+
+          {scanRows.map(r=>{
+            const rl=getLang(r.language);
+            return (
+              <div key={r.key} style={{border:outline(),borderRadius:16,background:r.keep?T.surface:"transparent",boxShadow:r.keep?drop(3,3):"none",padding:"12px 14px",marginBottom:11,opacity:r.keep?1:.55,transition:"all .15s"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:r.keep?10:0}}>
+                  <input type="checkbox" checked={r.keep} onChange={e=>patchScanRow(r.key,{keep:e.target.checked})}
+                    aria-label={`Keep ${r.foreign_text}`} style={{width:17,height:17,accentColor:INK,cursor:"pointer",flexShrink:0}}/>
+                  <div dir={rl.rtl?"rtl":"ltr"} style={{flex:1,minWidth:0,fontFamily:rl.font,fontSize:rl.rtl?22:16,fontWeight:700,color:INK,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:rl.rtl?"right":"left"}}>{r.foreign_text||"—"}</div>
+                  {r.translated&&<span title="Meaning written by the scanner" style={{fontSize:9,padding:"2px 8px",borderRadius:20,background:"#ffd97a",border:outline(1.5),fontFamily:"'DM Sans',sans-serif",fontWeight:600,color:INK,flexShrink:0}}>✨</span>}
+                </div>
+                {r.keep&&(
+                  <div style={{display:"flex",flexDirection:"column",gap:8,paddingLeft:27}}>
+                    <input value={r.foreign_text} onChange={e=>patchScanRow(r.key,{foreign_text:e.target.value})}
+                      dir={rl.rtl?"rtl":"ltr"} aria-label="Phrase"
+                      style={{...iSt,fontFamily:rl.font,fontSize:rl.rtl?20:14,textAlign:rl.rtl?"right":"left",padding:"9px 12px"}}/>
+                    <input value={r.native_text} onChange={e=>patchScanRow(r.key,{native_text:e.target.value,translated:false})}
+                      placeholder="Type the meaning — needed to save" aria-label="Meaning" style={{...iSt,padding:"9px 12px",borderColor:r.native_text.trim()?undefined:"#e2a13c"}}/>
+                    <div style={{display:"flex",gap:8}}>
+                      <select value={r.language} onChange={e=>patchScanRow(r.key,{language:e.target.value})} aria-label="Language" style={{...iSt,padding:"8px 10px",fontSize:12,flex:1}}>
+                        {LANGUAGES.map(l=><option key={l.name} value={l.name}>{l.flag} {l.name}</option>)}
+                      </select>
+                      <select value={r.topic} onChange={e=>patchScanRow(r.key,{topic:e.target.value})} aria-label="Topic" style={{...iSt,padding:"8px 10px",fontSize:12,flex:1}}>
+                        {TOPICS.filter(t=>t.id!=="All").map(t=><option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {(scanLines.length>0||linesBusy)&&(
+            <div style={{marginTop:scanRows.length?22:0,border:outline(),borderRadius:16,background:T.surface,boxShadow:drop(3,3),padding:"14px 16px"}}>
+              <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:10,marginBottom:6}}>
+                <div style={{fontSize:9,letterSpacing:2.5,color:T.muted,fontFamily:"'Syne',sans-serif",fontWeight:700,textTransform:"uppercase"}}>What it read</div>
+                {scanLines.length>0&&<div style={{fontSize:10,color:T.muted,fontFamily:"'DM Sans',sans-serif"}}>{scanLines.length} line{scanLines.length>1?"s":""}</div>}
+              </div>
+              {linesBusy&&!scanLines.length&&(
+                <div className="blink" style={{fontSize:12,color:T.muted,fontFamily:"'DM Sans',sans-serif",padding:"8px 0"}}>Reading text…</div>
+              )}
+              {scanLines.map((line,i)=>{
+                const used=lineUsed(line), ar=isArabicScript(line);
+                return (
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderTop:i?`1px solid ${T.border}`:"none",opacity:used?.45:1}}>
+                    <div dir="auto" style={{flex:1,minWidth:0,fontFamily:ar?"'Scheherazade New',serif":"'DM Sans',sans-serif",fontSize:ar?20:14,color:INK,lineHeight:1.35,overflowWrap:"anywhere"}}>{line}</div>
+                    {used?<span style={{fontSize:11,color:T.muted,fontFamily:"'DM Sans',sans-serif"}}>added ✓</span>:<>
+                      {meaningTarget&&(
+                        <button onClick={()=>useLineAsMeaning(line)} title={`Use as the meaning of ${meaningTarget.foreign_text}`}
+                          style={{flexShrink:0,background:"transparent",border:`1px solid ${T.borderMid}`,borderRadius:9,padding:"5px 9px",fontSize:11,fontFamily:"'DM Sans',sans-serif",color:T.inkMid,cursor:"pointer"}}>as meaning</button>
+                      )}
+                      <button onClick={()=>addLineAsPhrase(line)}
+                        style={{flexShrink:0,background:INK,border:outline(1.5),borderRadius:9,padding:"5px 10px",fontSize:11,fontFamily:"'DM Sans',sans-serif",fontWeight:600,color:"#fff",cursor:"pointer"}}>+ phrase</button>
+                    </>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div style={{display:"flex",gap:10,marginTop:20,flexWrap:"wrap"}}>
+            {scanRows.length>0&&(
+              <button onClick={saveScan} disabled={scanBusy||!keptRows.length}
+                style={{flex:1,minWidth:180,background:INK,border:outline(),borderRadius:14,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:14,padding:"14px",cursor:"pointer",boxShadow:drop(4,4),opacity:scanBusy||!keptRows.length?.5:1}}>
+                {scanBusy?"Adding…":`Add ${keptRows.length} phrase${keptRows.length===1?"":"s"}`}
+              </button>
+            )}
+            <button onClick={()=>camRef.current?.click()} disabled={scanBusy}
+              style={{background:T.surface,border:outline(),borderRadius:14,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:14,padding:"14px 18px",cursor:"pointer",boxShadow:drop(3,3)}}>
+              📸 Scan another
+            </button>
+            <button onClick={cancelScan} disabled={scanBusy}
+              style={{background:"transparent",border:`1px solid ${T.borderMid}`,borderRadius:14,color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:14,padding:"14px 18px",cursor:"pointer"}}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ══ FORM ══ */}
+      {view==="form"&&(
+        <div style={{padding:isDesktop?"36px 40px 60px":"20px 22px 40px",animation:"up .3s ease",maxWidth:isDesktop?620:500,marginLeft:isDesktop?"auto":0,marginRight:isDesktop?"auto":0,position:"relative",zIndex:1}}>
+          <div style={{fontSize:9,letterSpacing:4,color:T.lav,fontFamily:"'Syne',sans-serif",textTransform:"uppercase",marginBottom:5}}>{editPhrase?"Edit":"New Phrase"}</div>
+          <div style={{fontSize:22,fontWeight:800,fontFamily:"'Syne',sans-serif",marginBottom:22,color:T.ink,letterSpacing:"-.8px"}}>{editPhrase?"Update your phrase":"What did you learn today?"}</div>
+
+          {!editPhrase&&(
+            <div style={{marginBottom:22}}>
+              <label style={lSt}>📷 Scan a photo</label>
+              <div className="dz" style={{border:`2px dashed ${T.borderMid}`,borderRadius:14,padding:"16px",textAlign:"center",background:T.surface}}
+                   onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();startScan(e.dataTransfer.files[0]);}}>
+                <div style={{fontSize:12,color:T.muted,fontFamily:"'DM Sans',sans-serif",marginBottom:12}}>
+                  Point it at a page, sign or menu — every phrase it finds comes back for review.
+                </div>
+                <div style={{display:"flex",gap:9,justifyContent:"center",flexWrap:"wrap"}}>
+                  <button type="button" onClick={()=>camRef.current?.click()}
+                    style={{background:INK,border:outline(),borderRadius:12,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"10px 18px",cursor:"pointer",boxShadow:drop(3,3)}}>
+                    📸 Take photo
+                  </button>
+                  <button type="button" onClick={()=>fileRef.current?.click()}
+                    style={{background:T.surface,border:outline(),borderRadius:12,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"10px 18px",cursor:"pointer",boxShadow:drop(3,3)}}>
+                    🖼 Upload
+                  </button>
+                </div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:8,margin:"16px 0 4px"}}><div style={{flex:1,height:1,background:T.border}}/><span style={{fontSize:10,color:T.muted,fontFamily:"'DM Sans',sans-serif",whiteSpace:"nowrap"}}>or type one out</span><div style={{flex:1,height:1,background:T.border}}/></div>
+            </div>
+          )}
+
+          <div style={{marginBottom:14}}>
+            <label style={lSt}>Language</label>
+            <div style={{display:"flex",gap:7}}>
+              {LANGUAGES.map(l=>{const a=form.language===l.name;return <span key={l.name} className="ph" onClick={()=>setForm(p=>({...p,language:l.name}))} style={{padding:"7px 15px",borderRadius:20,fontSize:12,fontFamily:"'DM Sans',sans-serif",background:a?T.dark:T.surface,color:a?"#fff":T.inkMid,fontWeight:a?600:400,border:`1.5px solid ${a?T.dark:T.borderMid}`,boxShadow:a?"0 4px 12px rgba(26,24,37,.25)":"0 1px 3px rgba(0,0,0,.05)",cursor:"pointer"}}>{l.flag} {l.name}</span>;})}
+            </div>
+            {formLang.rtl&&<div style={{marginTop:7,fontSize:10,color:T.lav,fontFamily:"'DM Sans',sans-serif"}}>↩ Right-to-left script</div>}
+          </div>
+
+          <div style={{marginBottom:13}}>
+            <label style={lSt}>Phrase in {form.language}</label>
+            <input value={form.foreign_text} onChange={e=>setForm(p=>({...p,foreign_text:e.target.value}))} placeholder={formLang.rtl?"اكتب العبارة هنا...":"Type the phrase…"} dir={formLang.rtl?"rtl":"ltr"} style={{...iSt,fontFamily:formLang.font,fontSize:formLang.rtl?22:15,lineHeight:1.5,textAlign:formLang.rtl?"right":"left"}}/>
+          </div>
+
+          <div style={{marginBottom:13}}>
+            <label style={lSt}>Your Translation</label>
+            <input value={form.native_text} onChange={e=>setForm(p=>({...p,native_text:e.target.value}))} placeholder="e.g. Good morning" style={iSt}/>
+          </div>
+
+          <div style={{marginBottom:13}}>
+            <label style={lSt}>Topic</label>
+            <select value={form.topic} onChange={e=>setForm(p=>({...p,topic:e.target.value}))} style={iSt}>
+              {TOPICS.filter(t=>t.id!=="All").map(t=><option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
+            </select>
+          </div>
+
+          <div style={{marginBottom:22}}>
+            <label style={lSt}>Notes (optional)</label>
+            <textarea value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))} placeholder="Context, pronunciation tips, memory tricks…" rows={3} style={{...iSt,resize:"vertical",fontSize:13}}/>
+          </div>
+
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={saveForm} style={{flex:1,background:T.dark,border:"none",borderRadius:14,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:14,padding:"14px",cursor:"pointer",boxShadow:"0 6px 20px rgba(26,24,37,.25)"}}>{editPhrase?"Save Changes":"Add Phrase"}</button>
+            <button onClick={()=>setView("library")} style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:14,color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:14,padding:"14px 18px",cursor:"pointer"}}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* ══ BOTTOM BAR — mobile only; desktop has the inline toolbar ══ */}
+      {view==="library"&&!isDesktop&&(
+        <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:50,padding:"12px 22px 28px",background:`linear-gradient(to top,${T.bg} 60%,transparent 100%)`}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:9}}>
+
+            {/* Review Due */}
+            <button className="cth" onClick={()=>startPractice("due")}
+              style={{flex:1,background:dueCount>0?INK:T.surface,border:outline(),borderRadius:18,color:dueCount>0?"#fff":INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"14px 8px",display:"flex",alignItems:"center",justifyContent:"center",gap:5,boxShadow:drop(3,3)}}>
+              <span>⚡</span>
+              <span>Due</span>
+              {dueCount>0&&<span style={{background:"rgba(255,255,255,.15)",borderRadius:20,padding:"1px 7px",fontSize:11}}>{dueCount}</span>}
+            </button>
+
+            {/* Scan — the primary way phrases arrive */}
+            <button className="plus-fab" onClick={()=>camRef.current?.click()} aria-label="Scan a photo"
+              style={{width:58,height:58,borderRadius:"50%",background:T.pink,border:outline(2.5),color:"#fff",fontSize:24,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:drop(3,4),flexShrink:0}}>
+              📷
+            </button>
+
+            {/* Type one out */}
+            <button className="plus-fab" onClick={openAdd} aria-label="Add a phrase by typing"
+              style={{width:48,height:48,borderRadius:"50%",background:T.surface,border:outline(2.5),color:INK,fontSize:24,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:drop(3,3),flexShrink:0,fontWeight:400}}>
+              +
+            </button>
+
+            {/* Practice All */}
+            <button className="cth" onClick={()=>startPractice("all")}
+              style={{flex:1,background:T.surface,border:outline(),borderRadius:18,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"14px 8px",display:"flex",alignItems:"center",justifyContent:"center",gap:5,boxShadow:drop(3,3)}}>
+              <span>🃏</span>
+              <span>Practice</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete modal */}
+      {delConfirm&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.35)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",padding:24}} onClick={()=>setDelConfirm(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:20,padding:24,maxWidth:290,width:"100%",animation:"pop .2s ease",boxShadow:"0 20px 60px rgba(0,0,0,.15)"}}>
+            <div style={{fontSize:17,fontWeight:800,fontFamily:"'Syne',sans-serif",marginBottom:6,color:T.ink}}>Delete phrase?</div>
+            <div style={{fontSize:12,color:T.muted,fontFamily:"'DM Sans',sans-serif",marginBottom:20}}>Removed permanently from your cloud account.</div>
+            <div style={{display:"flex",gap:9}}>
+              <button onClick={()=>deletePhrase(delConfirm)} style={{flex:1,background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:12,color:"#dc2626",padding:"11px",cursor:"pointer",fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13}}>Delete</button>
+              <button onClick={()=>setDelConfirm(null)} style={{flex:1,background:T.surfaceHi,border:`1px solid ${T.border}`,borderRadius:12,color:T.muted,padding:"11px",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontSize:13}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<BiliG/>);
+</script>
+</body>
+</html>
