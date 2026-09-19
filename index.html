@@ -23,6 +23,22 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ── Supabase ──────────────────────────────────────────────────────────────────
 const SB_URL = "https://lcuratltvfmzyvcziniz.supabase.co";
 const SB_KEY = "sb_publishable_Keq9agFjHd_wF1FxRx88_g_l4ZABVun";
+// Login is switched off for now: nobody signs in, everyone reads the same shared library from
+// Supabase, and only the owner changes it (in Supabase). Set to true to bring the login flow back.
+const LOGIN_ENABLED = false;
+const VIEWER_SESSION = { viewer:true, user:{ id:"viewer", email:"" } };
+// A visitor cannot write to the shared phrases, but can still practise: their review progress is
+// kept in this browser and laid over the shared rows.
+const PROGRESS_KEY = "bilig_viewer_progress";
+const progressRead  = () => { try{ const v=JSON.parse(localStorage.getItem(PROGRESS_KEY)); return v&&typeof v==="object"?v:{}; }catch{ return {}; } };
+const progressWrite = o => { try{ localStorage.setItem(PROGRESS_KEY,JSON.stringify(o)); }catch{} };
+// A saved admin session, if it is a real login (never a visitor or, while login is off, a guest).
+const readStoredSession = () => { try{
+  const v=JSON.parse(localStorage.getItem("bilig_s"));
+  if(!v||v.viewer) return null;
+  if(v.guest) return LOGIN_ENABLED?v:null;
+  return v.access_token?v:null;
+}catch{ return null; } };
 const sbFetch = (path, opts={}) => fetch(`${SB_URL}/rest/v1${path}`, {
   headers:{ apikey:SB_KEY, "Content-Type":"application/json", Prefer:"return=representation", ...opts.headers },
   ...opts }).then(r=>r.json());
@@ -548,8 +564,8 @@ function PhraseCard({ p, onEdit, onDelete, dense=false, className="", style={}, 
           </div>
           <div className="card-actions" style={{display:"flex",gap:4,flexShrink:0}}>
             {isDue(p)&&<span title="Due for review" style={{fontSize:10,padding:"2px 7px",borderRadius:20,background:"#ffd97a",color:INK,border:outline(1.5),fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>⚡</span>}
-            <button className="ib" aria-label="Edit phrase" onClick={e=>{e.stopPropagation();onEdit(p);}} style={{background:"rgba(255,255,255,.92)",border:outline(1.5),borderRadius:8,color:INK,padding:"2px 6px",fontSize:11,cursor:"pointer"}}>✏️</button>
-            <button className="ib" aria-label="Delete phrase" onClick={e=>{e.stopPropagation();onDelete(p.id);}} style={{background:"rgba(255,255,255,.92)",border:outline(1.5),borderRadius:8,color:INK,padding:"2px 6px",fontSize:11,cursor:"pointer"}}>🗑️</button>
+            {onEdit&&<button className="ib" aria-label="Edit phrase" onClick={e=>{e.stopPropagation();onEdit(p);}} style={{background:"rgba(255,255,255,.92)",border:outline(1.5),borderRadius:8,color:INK,padding:"2px 6px",fontSize:11,cursor:"pointer"}}>✏️</button>}
+            {onDelete&&<button className="ib" aria-label="Delete phrase" onClick={e=>{e.stopPropagation();onDelete(p.id);}} style={{background:"rgba(255,255,255,.92)",border:outline(1.5),borderRadius:8,color:INK,padding:"2px 6px",fontSize:11,cursor:"pointer"}}>🗑️</button>}
           </div>
         </div>
 
@@ -602,7 +618,8 @@ function PhraseCard({ p, onEdit, onDelete, dense=false, className="", style={}, 
 // ════════════════════════════════════════════════════════════════════════════
 function BiliG() {
   // Auth
-  const [session,     setSession]     = useState(null);
+  const [session,     setSession]     = useState(()=>readStoredSession()||(LOGIN_ENABLED?null:VIEWER_SESSION));
+  const [loginOpen,   setLoginOpen]   = useState(false);   // the admin login popup
   const [authView,    setAuthView]    = useState("login");
   const [authEmail,   setAuthEmail]   = useState("");
   const [authPw,      setAuthPw]      = useState("");
@@ -610,6 +627,7 @@ function BiliG() {
   const [authError,   setAuthError]   = useState("");
   const [authSuccess, setAuthSuccess] = useState("");
   const isGuest = !!session?.guest;
+  const readOnly = !!session?.viewer;
   const isDesktop = useIsDesktop();
   const [winH, setWinH] = useState(()=>window.innerHeight);
   useEffect(()=>{ const h=()=>setWinH(window.innerHeight); window.addEventListener("resize",h); return()=>window.removeEventListener("resize",h); },[]);
@@ -655,8 +673,7 @@ function BiliG() {
   const toastRef=useRef(null), fileRef=useRef(null), camRef=useRef(null), langRef=useRef(null);
 
   // Session
-  useEffect(()=>{const s=localStorage.getItem("bilig_s");if(s){try{setSession(JSON.parse(s));}catch{}}}, []);
-  useEffect(()=>{ if(session)localStorage.setItem("bilig_s",JSON.stringify(session)); else localStorage.removeItem("bilig_s"); },[session]);
+  useEffect(()=>{ if(session&&!session.viewer)localStorage.setItem("bilig_s",JSON.stringify(session)); else localStorage.removeItem("bilig_s"); },[session]);
   useEffect(()=>{ if(session)loadPhrases(); },[session]);
   useEffect(()=>{ const h=e=>{if(langRef.current&&!langRef.current.contains(e.target))setLangOpen(false);}; document.addEventListener("mousedown",h); return()=>document.removeEventListener("mousedown",h); },[]);
   useEffect(()=>setStackIdx(0),[topicFilter, activeLang]);
@@ -676,6 +693,13 @@ function BiliG() {
 
   // DB
   const loadPhrases = async()=>{
+    if(readOnly){                                    // the shared library: read with the public key, no login
+      setDbLoading(true);
+      const data=await sbFetch("/phrases?order=created_at.desc&limit=1000").catch(()=>null);
+      if(Array.isArray(data)){ const prog=progressRead(); setPhrases(data.map(r=>({...r,...(prog[r.id]||{})}))); }
+      else toast$("Could not load the phrases","error");
+      setDbLoading(false); return;
+    }
     if(isGuest){
       let rows=guestRead();
       let seeded=false; try{ seeded=!!localStorage.getItem("bilig_guest_seeded"); }catch{}
@@ -684,16 +708,21 @@ function BiliG() {
     }
     setDbLoading(true);
     const data=await sbFetch("/phrases?order=created_at.desc",{headers:ah()});
-    if(Array.isArray(data)) setPhrases(data); else toast$("Could not load — check Supabase table","error");
+    if(Array.isArray(data)) setPhrases(data);
+    else if(data?.code==="PGRST303"||/jwt/i.test(data?.message||"")) await renewSession();
+    else toast$("Could not load — check Supabase table","error");
     setDbLoading(false);
   };
   const dbInsert = async row=>{
+    if(readOnly) return;
     if(isGuest){ const r={...row,id:newLocalId(),created_at:new Date().toISOString()}; setPhrases(p=>{const n=[r,...p];guestWrite(n);return n;}); return; }
     const d=await sbFetch("/phrases",{method:"POST",headers:ah(),body:JSON.stringify(row)}); if(Array.isArray(d)&&d[0])setPhrases(p=>[d[0],...p]); else toast$("Save failed","error"); };
   const dbUpdate = async(id,patch)=>{
+    if(readOnly){ const o=progressRead(); o[id]={...o[id],...patch}; progressWrite(o); setPhrases(p=>p.map(x=>x.id===id?{...x,...patch}:x)); return; }
     if(isGuest){ setPhrases(p=>{const n=p.map(x=>x.id===id?{...x,...patch}:x);guestWrite(n);return n;}); return; }
     await sbFetch(`/phrases?id=eq.${id}`,{method:"PATCH",headers:ah(),body:JSON.stringify(patch)}); setPhrases(p=>p.map(x=>x.id===id?{...x,...patch}:x)); };
   const dbDelete = async id=>{
+    if(readOnly) return;
     if(isGuest){ setPhrases(p=>{const n=p.filter(x=>x.id!==id);guestWrite(n);return n;}); return; }
     await sbFetch(`/phrases?id=eq.${id}`,{method:"DELETE",headers:ah()}); setPhrases(p=>p.filter(x=>x.id!==id)); };
 
@@ -701,7 +730,7 @@ function BiliG() {
   const handleAuth = async e=>{
     e.preventDefault(); setAuthLoading(true); setAuthError(""); setAuthSuccess("");
     const res=await authFetch(authView==="login"?"/token?grant_type=password":"/signup",{email:authEmail,password:authPw});
-    if(res.access_token) setSession({access_token:res.access_token,user:res.user});
+    if(res.access_token) setSession({access_token:res.access_token,refresh_token:res.refresh_token,expires_at_ms:Date.now()+(res.expires_in||3600)*1000,user:res.user});
     else if(authView==="signup"&&res.id) setAuthSuccess("Check your email to confirm, then log in.");
     else setAuthError(res.error_description||res.msg||"Something went wrong");
     setAuthLoading(false);
@@ -715,7 +744,20 @@ function BiliG() {
     toast$("5 starter phrases added ✓"); setSeeding(false);
   };
   const enterGuest = ()=>{ setAuthError(""); setAuthSuccess(""); setSession({guest:true,user:{id:"guest",email:"guest"}}); };
-  const logout = ()=>{ setSession(null); setPhrases([]); };
+  const endSession = ()=>setSession(LOGIN_ENABLED?null:VIEWER_SESSION);
+  const logout = ()=>{ endSession(); setPhrases([]); };
+  // Sessions last about an hour: swap in a fresh token, or fall back to visitor mode if that fails.
+  const renewSession = async()=>{
+    const rt=session?.refresh_token;
+    const res=rt?await authFetch("/token?grant_type=refresh_token",{refresh_token:rt}).catch(()=>({})):{};
+    if(res.access_token) setSession({access_token:res.access_token,refresh_token:res.refresh_token||rt,expires_at_ms:Date.now()+(res.expires_in||3600)*1000,user:res.user||session.user});
+    else{ endSession(); toast$("Your admin session ended. Tap Add phrase to sign in again.","info"); }
+  };
+  useEffect(()=>{
+    if(!session?.refresh_token||!session.expires_at_ms) return;
+    const t=setTimeout(renewSession,Math.max(0,session.expires_at_ms-Date.now()-60000));
+    return ()=>clearTimeout(t);
+  },[session]);
 
   // Derived
   const streak   = calcStreak(phrases);
@@ -743,8 +785,13 @@ function BiliG() {
   }),[phrases, activeLang, topicFilter]);
 
   // CRUD
-  const openAdd  = ()=>{ setEditPhrase(null); setForm({foreign_text:"",native_text:"",language:activeLang,topic:"Greetings",notes:""}); setImgPreview(null); setView("form"); };
-  const openEdit = p =>{ setEditPhrase(p); setForm({foreign_text:p.foreign_text,native_text:p.native_text,language:p.language,topic:p.topic,notes:p.notes||""}); setImgPreview(null); setView("form"); };
+  const openAdd  = ()=>{ if(readOnly)return; setEditPhrase(null); setForm({foreign_text:"",native_text:"",language:activeLang,topic:"Greetings",notes:""}); setImgPreview(null); setView("form"); };
+  // A visitor who taps an add button gets the admin login instead; signing in carries on to Add phrase.
+  const askAdmin = ()=>{ setAuthView("login"); setAuthError(""); setAuthSuccess(""); setAuthPw(""); setLoginOpen(true); };
+  const tryAdd   = ()=>readOnly?askAdmin():openAdd();
+  const tryScan  = ref=>readOnly?askAdmin():ref.current?.click();
+  useEffect(()=>{ if(!readOnly&&loginOpen){ setLoginOpen(false); openAdd(); } },[readOnly]);
+  const openEdit = p =>{ if(readOnly)return; setEditPhrase(p); setForm({foreign_text:p.foreign_text,native_text:p.native_text,language:p.language,topic:p.topic,notes:p.notes||""}); setImgPreview(null); setView("form"); };
   const saveForm = async()=>{
     if(!form.foreign_text.trim()||!form.native_text.trim()){toast$("Both fields are required","error");return;}
     if(editPhrase){ await dbUpdate(editPhrase.id,{foreign_text:form.foreign_text,native_text:form.native_text,language:form.language,topic:form.topic,notes:form.notes}); toast$("Updated ✓"); }
@@ -775,7 +822,7 @@ function BiliG() {
   // Two readers run side by side: on-device text reading (always available, free)
   // and the Gemini service (phrases with meanings). Whatever arrives is shown.
   const startScan = useCallback(async file=>{
-    if(!file)return;
+    if(!file||readOnly)return;
     if(!file.type?.startsWith("image/")){ toast$("That file isn't an image","error"); return; }
     const run=++scanSeq.current, current=()=>run===scanSeq.current;   // ignore results from a superseded scan
     setScanError(""); setScanNote(""); setScanRows([]); setScanLines([]);
@@ -808,7 +855,7 @@ function BiliG() {
       if(current()) setScanNote(`${err.message} Meanings aren't available, but you can add phrases from what it read and type the meaning.`);
     }
     if(current()) setScanBusy(false);
-  },[session, activeLang]);
+  },[session, activeLang, readOnly]);
 
   // Turning read lines into phrases by hand
   const addLineAsPhrase = line => setScanRows(rows=>[...rows,{
@@ -841,7 +888,7 @@ function BiliG() {
   const cancelScan = ()=>{ scanSeq.current++; setScanRows([]); setScanLines([]); setImgPreview(null); setScanError(""); setScanNote(""); setScanBusy(false); setLinesBusy(false); setView("library"); };
 
   // ── Paste many → review → save ──
-  const openBulk = ()=>{ setBulkText(""); setBulkRows([]); setBulkNote(""); setBulkExtra([]); setCatDraft(null); setView("bulk"); };
+  const openBulk = ()=>{ if(readOnly)return; setBulkText(""); setBulkRows([]); setBulkNote(""); setBulkExtra([]); setCatDraft(null); setView("bulk"); };
   const splitBulk = ()=>{
     const { rows, categories, created } = parseBulk(bulkText, activeLang!=="Arabic"?activeLang:"French", customTopicIds);
     if(!rows.length){ setBulkNote("Nothing to split yet. Paste some phrases first."); return; }
@@ -1007,7 +1054,7 @@ function BiliG() {
         {isDesktop?(<>
           {/* Time-based greeting */}
           <div style={{fontSize:13,color:T.muted,fontFamily:"'DM Sans',sans-serif",letterSpacing:"-0.2px"}}>
-            {greeting}, <span style={{color:T.inkMid,fontWeight:500}}>{firstName}</span> 👋
+            {greeting}{firstName&&<>, <span style={{color:T.inkMid,fontWeight:500}}>{firstName}</span></>} 👋
           </div>
           <div style={{fontFamily:"'Syne',sans-serif",fontSize:44,fontWeight:800,letterSpacing:"-2px",color:T.ink,lineHeight:1,display:"flex",alignItems:"baseline",gap:1}}>
             bili<span style={{color:T.lav}}>G</span><span style={{width:9,height:9,borderRadius:"50%",background:T.pink,display:"inline-block",marginLeft:3,marginBottom:2,verticalAlign:"bottom"}}/>
@@ -1018,7 +1065,7 @@ function BiliG() {
               bili<span style={{color:T.lav}}>G</span><span style={{width:6,height:6,borderRadius:"50%",background:T.pink,display:"inline-block",marginLeft:2,marginBottom:1,verticalAlign:"bottom"}}/>
             </div>
             <div style={{fontSize:11,color:T.muted,fontFamily:"'DM Sans',sans-serif",marginTop:3,letterSpacing:"-0.2px"}}>
-              {greeting}, <span style={{color:T.inkMid,fontWeight:500}}>{firstName}</span> 👋
+              {greeting}{firstName&&<>, <span style={{color:T.inkMid,fontWeight:500}}>{firstName}</span></>} 👋
             </div>
           </div>
         )}
@@ -1040,7 +1087,7 @@ function BiliG() {
                   {activeLang===l.name&&<span style={{marginLeft:"auto",color:T.lav,fontSize:12}}>✓</span>}
                 </div>
               ))}
-              <div style={{borderTop:`1px solid ${T.border}`,marginTop:4,paddingTop:4}}>
+              {!readOnly&&<div style={{borderTop:`1px solid ${T.border}`,marginTop:4,paddingTop:4}}>
                 {isGuest&&(
                   <div className="lr" onClick={()=>{setLangOpen(false);setAuthView("signup");logout();}} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 10px",borderRadius:10,cursor:"pointer",transition:"background .12s",background:"transparent"}}>
                     <span>✨</span><span style={{fontSize:12,fontFamily:"'DM Sans',sans-serif",color:T.lav,fontWeight:600}}>Sign up to sync</span>
@@ -1049,7 +1096,7 @@ function BiliG() {
                 <div className="lr" onClick={logout} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 10px",borderRadius:10,cursor:"pointer",transition:"background .12s",background:"transparent"}}>
                   <span>🚪</span><span style={{fontSize:12,fontFamily:"'DM Sans',sans-serif",color:T.muted}}>{isGuest?"Exit guest mode":"Log out"}</span>
                 </div>
-              </div>
+              </div>}
             </div>
           )}
         </div>
@@ -1120,11 +1167,11 @@ function BiliG() {
           {filtered.length===0&&!dbLoading&&(
             <div style={{textAlign:"center",padding:isDesktop?"80px 0":"60px 0",color:T.muted}}>
               <div style={{fontSize:40,marginBottom:14}}>🌿</div>
-              <div style={{fontFamily:"'Syne',sans-serif",fontSize:isDesktop?21:17,fontWeight:700,color:T.ink,marginBottom:6}}>Start your diary</div>
+              <div style={{fontFamily:"'Syne',sans-serif",fontSize:isDesktop?21:17,fontWeight:700,color:T.ink,marginBottom:6}}>{readOnly?"Nothing to show yet":"Start your diary"}</div>
               <div style={{fontFamily:"'DM Sans',sans-serif",fontSize:13,color:T.muted,marginBottom:phrases.length?0:20}}>
-                {phrases.length?`No ${activeLang} phrases here yet`:"Add your first phrase, or begin with five common ones"}
+                {phrases.length?`No ${activeLang} phrases here yet`:readOnly?"The shared library is empty right now":"Add your first phrase, or begin with five common ones"}
               </div>
-              {!phrases.length&&(
+              {!phrases.length&&!readOnly&&(
                 <button onClick={addStarters} disabled={seeding}
                   style={{background:"#ffd97a",border:outline(),borderRadius:14,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:13,padding:"12px 22px",cursor:"pointer",boxShadow:drop(3,3),opacity:seeding?.6:1}}>
                   {seeding?"adding…":"✨ Add 5 starter phrases"}
@@ -1138,7 +1185,7 @@ function BiliG() {
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(310px,1fr))",gap:22,alignItems:"stretch"}}>
               {filtered.map(p=>(
                 <PhraseCard key={p.id} p={p} dense className="gcard" style={{height:404}}
-                  onEdit={openEdit} onDelete={setDelConfirm}/>
+                  onEdit={readOnly?undefined:openEdit} onDelete={readOnly?undefined:setDelConfirm}/>
               ))}
             </div>
           )}
@@ -1156,7 +1203,7 @@ function BiliG() {
               })}
               {filtered[stackIdx]&&(
                 <PhraseCard key={`${filtered[stackIdx].id}-${stackIdx}`} p={filtered[stackIdx]} className="stack-card"
-                  onEdit={openEdit} onDelete={setDelConfirm}
+                  onEdit={readOnly?undefined:openEdit} onDelete={readOnly?undefined:setDelConfirm}
                   style={{position:"absolute",inset:0,boxShadow:"0 24px 64px rgba(26,24,37,.22)",cursor:"grab"}}
                   onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
                   onMouseDown={onMouseDown} onMouseUp={onMouseUp} onMouseLeave={onMouseLeave}/>
@@ -1551,8 +1598,8 @@ function BiliG() {
             {[
               {key:"practice", icon:"🃏", label:"Practice",   onClick:()=>startPractice("all"), bg:T.surface, fg:INK},
               {key:"due",      icon:"⚡", label:"Review Due", onClick:()=>startPractice("due"), bg:INK,       fg:"#fff", badge:dueCount},
-              {key:"scan",     icon:"📷", label:"Scan",       onClick:()=>fileRef.current?.click(), bg:T.surface, fg:INK},
-              {key:"add",      icon:"+",  label:"Add phrase", onClick:openAdd,                  bg:T.pink,    fg:"#fff", strong:true},
+              {key:"scan",     icon:"📷", label:"Scan",       onClick:()=>tryScan(fileRef), bg:T.surface, fg:INK},
+              {key:"add",      icon:"+",  label:"Add phrase", onClick:tryAdd,                   bg:T.pink,    fg:"#fff", strong:true},
             ].map(b=>(
               <button key={b.key} className="cth" onClick={b.onClick}
                 style={{background:b.bg,border:outline(2.5),borderRadius:18,color:b.fg,fontFamily:"'Syne',sans-serif",fontWeight:b.strong?800:700,fontSize:15,
@@ -1580,13 +1627,13 @@ function BiliG() {
             </button>
 
             {/* Scan — the primary way phrases arrive */}
-            <button className="plus-fab" onClick={()=>camRef.current?.click()} aria-label="Scan a photo"
+            <button className="plus-fab" onClick={()=>tryScan(camRef)} aria-label="Scan a photo"
               style={{width:58,height:58,borderRadius:"50%",background:T.pink,border:outline(2.5),color:"#fff",fontSize:24,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:drop(3,4),flexShrink:0}}>
               📷
             </button>
 
             {/* Type one out */}
-            <button className="plus-fab" onClick={openAdd} aria-label="Add a phrase by typing"
+            <button className="plus-fab" onClick={tryAdd} aria-label="Add a phrase by typing"
               style={{width:48,height:48,borderRadius:"50%",background:T.surface,border:outline(2.5),color:INK,fontSize:24,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:drop(3,3),flexShrink:0,fontWeight:400}}>
               +
             </button>
@@ -1598,6 +1645,27 @@ function BiliG() {
               <span>Practice</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Admin login — opens when a visitor taps an add button */}
+      {loginOpen&&readOnly&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.35)",zIndex:110,display:"flex",alignItems:"center",justifyContent:"center",padding:24}} onClick={()=>setLoginOpen(false)}>
+          <form onSubmit={handleAuth} onClick={e=>e.stopPropagation()}
+            style={{background:T.surface,border:outline(2.5),borderRadius:24,padding:"28px 26px",width:"100%",maxWidth:360,boxShadow:drop(6,6),display:"flex",flexDirection:"column",gap:14}}>
+            <div>
+              <div style={{fontSize:9,letterSpacing:4,color:T.lav,fontFamily:"'Syne',sans-serif",textTransform:"uppercase",marginBottom:5}}>Admin</div>
+              <div style={{fontSize:21,fontWeight:800,fontFamily:"'Syne',sans-serif",color:INK,letterSpacing:"-.6px"}}>Log in to add phrases</div>
+              <div style={{fontSize:12,color:T.muted,fontFamily:"'DM Sans',sans-serif",marginTop:6,lineHeight:1.5}}>Only the owner can add or change phrases. Everyone else can browse and practise.</div>
+            </div>
+            <div><label style={lSt}>Email</label><input type="email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="you@example.com" required autoFocus style={iSt}/></div>
+            <div><label style={lSt}>Password</label><input type="password" value={authPw} onChange={e=>setAuthPw(e.target.value)} placeholder="••••••••" required style={iSt}/></div>
+            {authError&&<div style={{fontSize:12,color:"#dc2626",background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:10,padding:"9px 12px"}}>{authError}</div>}
+            <div style={{display:"flex",gap:10}}>
+              <button type="submit" disabled={authLoading} style={{flex:1,background:INK,border:outline(),borderRadius:14,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:14,padding:"13px",cursor:"pointer",boxShadow:drop(3,3),opacity:authLoading?.6:1}}>{authLoading?"…":"Log in →"}</button>
+              <button type="button" onClick={()=>setLoginOpen(false)} style={{background:"transparent",border:`1px solid ${T.borderMid}`,borderRadius:14,color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:14,padding:"13px 16px",cursor:"pointer"}}>Cancel</button>
+            </div>
+          </form>
         </div>
       )}
 
