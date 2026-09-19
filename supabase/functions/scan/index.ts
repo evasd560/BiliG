@@ -35,6 +35,7 @@ Rules:
 - MEANING: if the image already shows a translation for a phrase (a textbook column, a gloss, a caption), use that translation verbatim and set translated to false. It is the wording the learner's own material uses. Only write your own English translation when the image gives none, and then set translated to true.
 - Skip page numbers, exercise numbers, headers, publisher text, and anything that is not a phrase to learn.
 - Copy each phrase exactly as written, in its own script. Never invent a phrase that is not legible in the image.
+- Keep Arabic diacritics (tashkeel) exactly as they appear: do not add, remove or normalize them, and do not correct spelling.
 - If the image contains no Arabic, French or Spanish text, return an empty phrases list.
 - Separately, in raw_lines, transcribe every line of text you can read in the image, verbatim and in reading order, including headers and anything you skipped as a phrase.`;
 
@@ -154,7 +155,11 @@ async function readWithGemini(apiKey: string, image: string, mediaType: string) 
             { text: "Pull out the phrases in this image, with their meanings." },
           ],
         }],
-        generationConfig: { responseMimeType: "application/json", responseSchema: RESPONSE_SCHEMA },
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: RESPONSE_SCHEMA,
+          mediaResolution: "MEDIA_RESOLUTION_HIGH", // more tokens per image: small Arabic marks survive
+        },
       }),
     },
   );
