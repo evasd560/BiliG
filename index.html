@@ -114,7 +114,37 @@ const CUSTOM_STYLES = [
   { bg:"#5b6b7a", a:"#dbe6ee", b:"#9fb5c6", c:"#4b5a68" },
   { bg:"#8a5a34", a:"#f3dcc4", b:"#d9a678", c:"#744a28" },
 ];
-const getTopicStyle = t => TOPIC_STYLE[t] || (t?CUSTOM_STYLES[[...t].reduce((h,c)=>(h*31+c.charCodeAt(0))>>>0,7)%CUSTOM_STYLES.length]:TOPIC_STYLE.Other);
+// The dominant hue of an emoji, read from the pixels it draws (cached). Null for a grey or plain one.
+const _emojiHue = new Map();
+function emojiHue(emoji){
+  if(_emojiHue.has(emoji)) return _emojiHue.get(emoji);
+  let hue=null;
+  try{
+    const c=document.createElement("canvas"); c.width=c.height=48;
+    const x=c.getContext("2d",{willReadFrequently:true});
+    x.font="36px 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif"; x.textAlign="center"; x.textBaseline="middle"; x.fillText(emoji,24,26);
+    const d=x.getImageData(0,0,48,48).data; let sx=0,sy=0,w=0;
+    for(let i=0;i<d.length;i+=4){
+      if(d[i+3]<160) continue;
+      const r=d[i]/255,g=d[i+1]/255,b=d[i+2]/255, mx=Math.max(r,g,b), ch=mx-Math.min(r,g,b);
+      if(ch<.18||mx<.2) continue;                                   // skip greys and near-black
+      const h=((mx===r?((g-b)/ch+6)%6:mx===g?(b-r)/ch+2:(r-g)/ch+4)*60)*Math.PI/180;
+      sx+=Math.cos(h)*ch; sy+=Math.sin(h)*ch; w+=ch;                // weight by how colourful the pixel is
+    }
+    if(w>3) hue=((Math.atan2(sy,sx)*180/Math.PI)+360)%360;
+  }catch{}
+  _emojiHue.set(emoji,hue); return hue;
+}
+// A card colour that complements the emoji: the opposite side of the colour wheel, dark enough for white text.
+const complement = h => { const c=Math.round((h+180)%360); return { bg:`hsl(${c},58%,42%)`, a:`hsl(${c},70%,86%)`, b:`hsl(${c},70%,68%)`, c:`hsl(${c},60%,34%)` }; };
+const _cardStyle = new Map();
+const getTopicStyle = t => {
+  if(TOPIC_STYLE[t]) return TOPIC_STYLE[t];
+  if(!t) return TOPIC_STYLE.Other;
+  const emoji=getTopic(t).icon;
+  if(!_cardStyle.has(emoji)){ const h=emojiHue(emoji); _cardStyle.set(emoji,h==null?CUSTOM_STYLES[[...t].reduce((a,c)=>(a*31+c.charCodeAt(0))>>>0,7)%CUSTOM_STYLES.length]:complement(h)); }
+  return _cardStyle.get(emoji);
+};
 const MASTERY_LABELS = ["New","Learning","Review","Mastered"];
 const MASTERY_COLORS = ["#b8b5c8","#60a5fa","#fb923c","#22c55e"];
 const SRS_MULT = [1.0,2.5,4.0], SRS_DAYS = [1,4,10];
@@ -158,7 +188,16 @@ const TOPIC_EMOJI = [
   [/\b(verb|grammar|sentence|conjunction|pronoun|preposition|connector|vocab|word|alphabet|letter)/,"🔤"],
 ];
 const topicEmoji = name => { const n=String(name||"").toLowerCase(); const hit=TOPIC_EMOJI.find(([re])=>re.test(n)); return hit?hit[1]:"🏷️"; };
-const getTopic = id => TOPICS.find(t=>t.id===id)||(id?{id,label:id,icon:topicEmoji(id)}:TOPICS[0]);   // an id not in TOPICS is a custom category
+// Emoji chosen in Settings → Categories, by category name (filled in when the categories load).
+let CATEGORY_EMOJI = {};
+const getTopic = id => {
+  const base=TOPICS.find(t=>t.id===id), own=CATEGORY_EMOJI[id];
+  if(base) return own&&id!=="All"?{...base,icon:own}:base;
+  return id?{id,label:id,icon:own||topicEmoji(id)}:TOPICS[0];   // an id not in TOPICS is a custom category
+};
+// A few dozen to pick from when choosing a category's emoji (any emoji can also be typed).
+const EMOJI_CHOICES = ["👋","🌸","❓","💛","💬","🍽️","✈️","👨‍👩‍👧","🔢","🧍","🎨","🐾","🐦","🐟","🌦️","🍂","🌙","🙏","⏰","📅","💼","🏥","🛍️","💰","👕","🏠","🎓","⚽","🎮","🎵","🎬","🖼️","🌿","💻","🔬","🧭","🚌","🏨","🛂","⚖️","🚨","☕","🍎","🍳","❤️","🎉","📰","📚","✍️","🏙️","🌍","🧒","🧑","🧼","😴","🔤","⭐","🔥","💡","🗣️","🤝","😊","😢","🚗","🏖️","🍕","🥖","🎁","🏷️"];
+const EMOJI_RE = /\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|\p{Emoji_Modifier})*/u;
 const todayStr = () => new Date().toISOString().slice(0,10);
 const isDue    = p  => !p.srs_next_review || Date.now() >= p.srs_next_review;
 const masteryLevel = p => { const r=p.srs_reps||0; return r===0?0:r<3?1:r<6?2:3; };
@@ -584,37 +623,112 @@ const readAsDataUrl = file => new Promise((resolve,reject)=>{
 
 // ── Phrase card ───────────────────────────────────────────────────────────────
 // One card, used by both the mobile swipe-stack and the desktop grid.
-function PhraseCard({ p, onEdit, onDelete, dense=false, className="", style={}, ...rest }) {
+// Simple outline icons for the card buttons (they take the colour of the text around them).
+const IconEdit = ({size=16}) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+  </svg>
+);
+const IconTrash = ({size=16}) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+  </svg>
+);
+const IconGear = ({size=18}) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="3"/>
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+  </svg>
+);
+// A category with an illustration shows it in a framed picture; one without shows its emoji, loose and tilted.
+const hasTopicSvg = t => !!TOPIC_SVGS[t];
+function TopicArt({ topic }) {
+  return <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"
+              style={{width:"100%",height:"100%",display:"block"}} dangerouslySetInnerHTML={{__html:getTopicSvg(topic)}}/>;
+}
+
+function PhraseCard({ p, onEdit, onDelete, dense=false, compact=false, className="", style={}, ...rest }) {
   const lang = getLang(p.language), tag = statusTag(p), tc = getTopic(p.topic), ts = getTopicStyle(p.topic);
   const acc  = p.total_reviews>0 ? Math.round((p.good_reviews/p.total_reviews)*100) : null;
   // Arabic keeps its own script face; latin phrases take the condensed poster face (ref 4).
   const heroFont = lang.rtl ? lang.font : DISPLAY;
   const len      = (p.foreign_text||"").length;
   const shrink   = len>34 ? .52 : len>22 ? .64 : len>12 ? .78 : 1;
+  const artSide  = lang.rtl ? "left" : "right";   // opposite the reading edge
+  const emojiArt = !hasTopicSvg(p.topic);
+  const tilt     = lang.rtl ? -9 : 9;
+
+  // The category, beside the translation
+  const tagPill = (
+    <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:T.surfaceHi,border:`1px solid ${T.borderMid}`,color:T.inkMid,fontFamily:"'DM Sans',sans-serif",fontWeight:600,whiteSpace:"nowrap",lineHeight:1.4}}>
+      {tc.label}
+    </span>
+  );
+  const iconBtn = (label,onClick,icon) => (
+    <button className="ib" aria-label={label} title={label} onClick={e=>{e.stopPropagation();onClick();}}
+      style={{background:"transparent",border:"none",color:INK,padding:5,borderRadius:8,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{icon}</button>
+  );
+  // Edit and delete: bottom right, shown when the card is hovered (always on touch screens)
+  const actions = (size,pos) => (onEdit||onDelete)?(
+    <div className="card-actions" style={{display:"flex",...pos}}>
+      {onEdit&&iconBtn("Edit phrase",()=>onEdit(p),<IconEdit size={size}/>)}
+      {onDelete&&iconBtn("Delete phrase",()=>onDelete(p.id),<IconTrash size={size}/>)}
+    </div>
+  ):null;
+  const statusPill = tag&&<span style={{fontSize:9,padding:"2px 8px",borderRadius:20,background:tag.color,border:outline(1.5),fontFamily:"'Syne',sans-serif",fontWeight:800,letterSpacing:.5,textTransform:"uppercase",color:INK,whiteSpace:"nowrap"}}>{tag.label}</span>;
+  const duePill = isDue(p)&&<span title="Due for review" style={{fontSize:10,padding:"1px 6px",borderRadius:20,background:"#ffd97a",color:INK,border:outline(1.5),fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>⚡</span>;
+
+  // ── Compact card: the grid. About half the height of the big one, so more fit on screen. ──
+  if(compact){
+    const cHero = Math.round((lang.rtl?30:26)*(len>34?.62:len>22?.76:len>12?.9:1));
+    return (
+      <div className={`pcard ${className}`}
+        style={{borderRadius:18,overflow:"hidden",background:T.surface,userSelect:"none",border:outline(2.5),display:"flex",flexDirection:"column",height:"100%",...style}} {...rest}>
+        <div style={{background:ts.bg,padding:"10px 12px",display:"flex",alignItems:"center",gap:10,flexDirection:lang.rtl?"row":"row-reverse",minHeight:78}}>
+          {emojiArt?(
+            <div aria-hidden="true" style={{width:54,height:54,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:42,lineHeight:1,transform:`rotate(${tilt}deg)`,filter:"drop-shadow(2px 3px 0 rgba(26,24,37,.25))"}}>{tc.icon}</div>
+          ):(
+            <div style={{width:54,height:54,flexShrink:0,background:"#fffdf8",border:outline(2),borderRadius:12,boxShadow:drop(2,2),padding:4,transform:`rotate(${lang.rtl?-3:3}deg)`}}>
+              <TopicArt topic={p.topic}/>
+            </div>
+          )}
+          <div dir={lang.rtl?"rtl":"ltr"}
+            style={{flex:1,minWidth:0,fontSize:cHero,fontFamily:heroFont,lineHeight:lang.rtl?1.25:1,textAlign:lang.rtl?"right":"left",color:"#fff",
+                    fontWeight:lang.rtl?700:400,letterSpacing:lang.rtl?0:"-.3px",overflowWrap:"anywhere",textShadow:"2px 2px 0 rgba(26,24,37,.28)"}}>
+            {p.foreign_text}
+          </div>
+        </div>
+        <div style={{borderTop:outline(2.5),padding:"9px 12px 8px",display:"flex",flexDirection:"column",gap:5,flex:1,minHeight:0}}>
+          <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"3px 8px"}}>
+            <span style={{fontSize:16,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:800,lineHeight:1.2,letterSpacing:"-.3px",overflowWrap:"anywhere"}}>{p.native_text}</span>
+            {tagPill}
+          </div>
+          {p.notes&&<div style={{fontSize:12,color:T.inkMid,fontFamily:SERIF,fontStyle:"italic",lineHeight:1.3}}>{p.notes}</div>}
+          <div style={{marginTop:"auto",paddingTop:2,display:"flex",alignItems:"center",gap:6,minHeight:26}}>
+            {statusPill}{duePill}
+            {acc!==null&&<span style={{fontSize:10,color:T.muted,fontFamily:"'DM Sans',sans-serif"}}>{acc}% · {p.total_reviews}</span>}
+            <span style={{flex:1}}/>
+            {actions(15,{})}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const heroSize = Math.round((lang.rtl ? (dense?42:66) : (dense?34:54)) * shrink);
   const artW     = dense?96:124;
-  const artSide  = lang.rtl ? "left" : "right";   // opposite the reading edge
 
   return (
-    <div className={className}
+    <div className={`pcard ${className}`}
       style={{borderRadius:dense?20:26,overflow:"hidden",background:T.surface,userSelect:"none",
               border:outline(2.5),display:"flex",flexDirection:"column",...style}} {...rest}>
 
-      {/* ── Poster half: subject colour, kicker, hero phrase, framed graphic ── */}
+      {/* ── Poster half: subject colour, hero phrase, picture ── */}
       <div style={{flex:"2.7 1 0",minHeight:0,background:ts.bg,position:"relative",overflow:"hidden",
                    padding:dense?"14px 16px":"18px 22px",display:"flex",flexDirection:"column"}}>
 
-        {/* kicker + actions */}
-        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8,position:"relative",zIndex:3}}>
-          <div style={{fontFamily:SERIF,fontStyle:"italic",fontSize:dense?13:15,color:"rgba(255,255,255,.92)",lineHeight:1.2,minWidth:0}}>
-{p.language} · {tc.label}
-          </div>
-          <div className="card-actions" style={{display:"flex",gap:4,flexShrink:0}}>
-            {isDue(p)&&<span title="Due for review" style={{fontSize:10,padding:"2px 7px",borderRadius:20,background:"#ffd97a",color:INK,border:outline(1.5),fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>⚡</span>}
-            {onEdit&&<button className="ib" aria-label="Edit phrase" onClick={e=>{e.stopPropagation();onEdit(p);}} style={{background:"rgba(255,255,255,.92)",border:outline(1.5),borderRadius:8,color:INK,padding:"2px 6px",fontSize:11,cursor:"pointer"}}>✏️</button>}
-            {onDelete&&<button className="ib" aria-label="Delete phrase" onClick={e=>{e.stopPropagation();onDelete(p.id);}} style={{background:"rgba(255,255,255,.92)",border:outline(1.5),borderRadius:8,color:INK,padding:"2px 6px",fontSize:11,cursor:"pointer"}}>🗑️</button>}
-          </div>
-        </div>
+        {/* due badge (the language · category tag sits beside the translation) */}
+        {isDue(p)&&<div style={{display:"flex",justifyContent:"flex-end",position:"relative",zIndex:3,minHeight:26}}>{duePill}</div>}
 
         {/* hero phrase */}
         <div style={{position:"relative",zIndex:2,flex:1,display:"flex",alignItems:"flex-start",minHeight:0,overflow:"hidden",
@@ -629,34 +743,41 @@ function PhraseCard({ p, onEdit, onDelete, dense=false, className="", style={}, 
           </div>
         </div>
 
-        {/* framed subject graphic, tucked into the corner (ref 4's image block) */}
-        <div style={{position:"absolute",bottom:dense?12:16,[artSide]:dense?12:18,zIndex:2,
-                     width:artW,height:artW,background:"#fffdf8",border:outline(2.5),borderRadius:dense?14:16,
-                     boxShadow:drop(3,3),padding:dense?5:7,transform:`rotate(${lang.rtl?-3:3}deg)`}}>
-          <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"
-               style={{width:"100%",height:"100%",display:"block"}}
-               dangerouslySetInnerHTML={{__html:getTopicSvg(p.topic)}}/>
-        </div>
+        {/* the picture: a framed illustration, or the category's emoji loose and tilted */}
+        {emojiArt?(
+          <div aria-hidden="true" style={{position:"absolute",bottom:dense?8:12,[artSide]:dense?14:20,zIndex:2,fontSize:Math.round(artW*.82),lineHeight:1,
+                       transform:`rotate(${tilt}deg)`,filter:"drop-shadow(3px 4px 0 rgba(26,24,37,.28))"}}>{tc.icon}</div>
+        ):(
+          <div style={{position:"absolute",bottom:dense?12:16,[artSide]:dense?12:18,zIndex:2,
+                       width:artW,height:artW,background:"#fffdf8",border:outline(2.5),borderRadius:dense?14:16,
+                       boxShadow:drop(3,3),padding:dense?5:7,transform:`rotate(${lang.rtl?-3:3}deg)`}}>
+            <TopicArt topic={p.topic}/>
+          </div>
+        )}
 
-        {/* status sticker, opposite corner (ref 4's rotated stickers): New for 3 days, then mastery */}
+        {/* status sticker, opposite corner: New for 3 days, then mastery (straight) */}
         {tag&&<div style={{position:"absolute",bottom:dense?18:24,[lang.rtl?"right":"left"]:dense?16:22,zIndex:2,
-                     transform:`rotate(${lang.rtl?7:-7}deg)`,background:tag.color,border:outline(2),
+                     background:tag.color,border:outline(2),
                      borderRadius:20,padding:dense?"3px 11px":"4px 14px",boxShadow:drop(2,2)}}>
           <span style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:dense?9:11,letterSpacing:.5,
                         textTransform:"uppercase",color:INK,whiteSpace:"nowrap"}}>{tag.label}</span>
         </div>}
       </div>
 
-      {/* ── Caption half: the translation, poster-footer style ── */}
-      <div style={{flex:"1.1 1 0",minHeight:0,background:T.surface,borderTop:outline(2.5),display:"flex",
+      {/* ── Caption half: the translation and its category, poster-footer style ── */}
+      <div style={{flex:"1.1 1 0",minHeight:0,background:T.surface,borderTop:outline(2.5),display:"flex",position:"relative",
                    flexDirection:"column",justifyContent:"space-between",gap:6,
                    padding:dense?"11px 16px 12px":"14px 22px 16px",overflow:"hidden"}}>
         <div style={{minHeight:0,overflow:"hidden"}}>
           <div style={{fontSize:9,letterSpacing:2.5,color:T.muted,fontFamily:"'Syne',sans-serif",fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Means</div>
-          <div style={{fontSize:dense?18:22,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:800,lineHeight:1.15,letterSpacing:"-.4px",overflowWrap:"anywhere"}}>{p.native_text}</div>
+          <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"4px 10px"}}>
+            <div style={{fontSize:dense?18:22,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:800,lineHeight:1.15,letterSpacing:"-.4px",overflowWrap:"anywhere"}}>{p.native_text}</div>
+            {tagPill}
+          </div>
           {p.notes&&<div style={{fontSize:dense?12:13,color:T.inkMid,fontFamily:SERIF,fontStyle:"italic",marginTop:6,lineHeight:1.35}}>{p.notes}</div>}
         </div>
         {acc!==null&&<div style={{fontSize:10,color:T.muted,fontFamily:"'DM Sans',sans-serif"}}>{acc}% correct · {p.total_reviews} reviews</div>}
+        {actions(17,{position:"absolute",right:dense?10:16,bottom:dense?8:12})}
       </div>
     </div>
   );
@@ -718,6 +839,21 @@ function BiliG() {
   const [deviceCount,  setDeviceCount]  = useState(0);     // phrases saved only on this device, waiting to be moved
   const [deviceBusy,   setDeviceBusy]   = useState(false);
   const [deviceHide,   setDeviceHide]   = useState(false);
+  const [manageIds,    setManageIds]    = useState([]);          // the phrases the Edit screen is working on (a snapshot when it opened)
+  const [manageSel,    setManageSel]    = useState(()=>new Set());
+  const [manageEdits,  setManageEdits]  = useState({});          // id -> fields changed but not saved yet
+  const [manageQ,      setManageQ]      = useState("");
+  const [manageBusy,   setManageBusy]   = useState(false);
+  const [manageDel,    setManageDel]    = useState(false);       // "delete N phrases?" confirmation
+  const [catRows,      setCatRows]      = useState([]);          // categories saved with an emoji: [{name, emoji}]
+  const [catsReady,    setCatsReady]    = useState(false);       // false until the categories table answers (it may not exist yet)
+  const [settingsTab,  setSettingsTab]  = useState("phrases");   // phrases | categories
+  const [emojiFor,     setEmojiFor]     = useState(null);        // whose emoji picker is open (a category name, or "__new__")
+  const [catNameDraft, setCatNameDraft] = useState({});          // category -> the new name being typed
+  const [newCat,       setNewCat]       = useState({name:"",emoji:""});
+  const [catDel,       setCatDel]       = useState(null);        // category waiting on a delete confirmation
+  const [catBusy,      setCatBusy]      = useState(false);
+  const [loginFor,     setLoginFor]     = useState("add");       // what the admin login popup was opened for
   const [bulkExtra,    setBulkExtra]    = useState([]);   // categories added on the review screen that no phrase uses yet
   const [catDraft,     setCatDraft]     = useState(null); // category being renamed / added: {mode:"rename"|"add"|"row", from?, key?, value}
   const [langOpen,     setLangOpen]     = useState(false);
@@ -768,18 +904,29 @@ function BiliG() {
     else toast$("Could not load — check Supabase table","error");
     setDbLoading(false);
   };
+  const loadCategories = async()=>{
+    const d=await sbFetch("/categories?select=name,emoji&order=created_at").catch(()=>null);
+    if(Array.isArray(d)){ CATEGORY_EMOJI=Object.fromEntries(d.map(r=>[r.name,r.emoji])); setCatRows(d); setCatsReady(true); }
+    else setCatsReady(false);                        // no table yet: emoji fall back to the automatic ones
+  };
+  useEffect(()=>{ loadCategories(); },[]);
   const dbInsert = async row=>{
     if(readOnly) return;
     if(isGuest){ const r={...row,id:newLocalId(),created_at:new Date().toISOString()}; setPhrases(p=>{const n=[r,...p];guestWrite(n);return n;}); return; }
     const d=await sbFetch("/phrases",{method:"POST",headers:ah(),body:JSON.stringify(row)}); if(Array.isArray(d)&&d[0])setPhrases(p=>[d[0],...p]); else toast$("Save failed","error"); };
   const dbUpdate = async(id,patch)=>{
-    if(readOnly){ const o=progressRead(); o[id]={...o[id],...patch}; progressWrite(o); setPhrases(p=>p.map(x=>x.id===id?{...x,...patch}:x)); return; }
-    if(isGuest){ setPhrases(p=>{const n=p.map(x=>x.id===id?{...x,...patch}:x);guestWrite(n);return n;}); return; }
-    await sbFetch(`/phrases?id=eq.${id}`,{method:"PATCH",headers:ah(),body:JSON.stringify(patch)}); setPhrases(p=>p.map(x=>x.id===id?{...x,...patch}:x)); };
+    if(readOnly){ const o=progressRead(); o[id]={...o[id],...patch}; progressWrite(o); setPhrases(p=>p.map(x=>x.id===id?{...x,...patch}:x)); return true; }
+    if(isGuest){ setPhrases(p=>{const n=p.map(x=>x.id===id?{...x,...patch}:x);guestWrite(n);return n;}); return true; }
+    // Supabase answers with the rows it changed: none means nothing was saved (not yours, or signed out)
+    const d=await sbFetch(`/phrases?id=eq.${id}`,{method:"PATCH",headers:ah(),body:JSON.stringify(patch)}).catch(()=>null);
+    if(Array.isArray(d)&&d.length){ setPhrases(p=>p.map(x=>x.id===id?{...x,...patch}:x)); return true; }
+    return false; };
   const dbDelete = async id=>{
-    if(readOnly) return;
-    if(isGuest){ setPhrases(p=>{const n=p.filter(x=>x.id!==id);guestWrite(n);return n;}); return; }
-    await sbFetch(`/phrases?id=eq.${id}`,{method:"DELETE",headers:ah()}); setPhrases(p=>p.filter(x=>x.id!==id)); };
+    if(readOnly) return false;
+    if(isGuest){ setPhrases(p=>{const n=p.filter(x=>x.id!==id);guestWrite(n);return n;}); return true; }
+    const d=await sbFetch(`/phrases?id=eq.${id}`,{method:"DELETE",headers:ah()}).catch(()=>null);
+    if(Array.isArray(d)&&d.length){ setPhrases(p=>p.filter(x=>x.id!==id)); return true; }
+    return false; };
 
   // Auth
   const handleAuth = async e=>{
@@ -851,9 +998,9 @@ function BiliG() {
   // still being reviewed. Custom ones sit just before "Other".
   const customTopicIds = useMemo(()=>{
     const known=new Set(TOPICS.map(t=>t.id));
-    return [...new Set([...phrases.map(p=>p.topic),...bulkRows.map(r=>r.topic),...scanRows.map(r=>r.topic),...bulkExtra])].filter(t=>t&&!known.has(t)).sort();
-  },[phrases,bulkRows,scanRows,bulkExtra]);
-  const topicList = useMemo(()=>[...TOPICS.slice(0,-1),...customTopicIds.map(getTopic),TOPICS[TOPICS.length-1]],[customTopicIds]);
+    return [...new Set([...phrases.map(p=>p.topic),...bulkRows.map(r=>r.topic),...scanRows.map(r=>r.topic),...bulkExtra,...Object.values(manageEdits).map(e=>e.topic),form.topic,...catRows.map(r=>r.name)])].filter(t=>t&&!known.has(t)).sort();
+  },[phrases,bulkRows,scanRows,bulkExtra,manageEdits,form.topic,catRows]);
+  const topicList = useMemo(()=>[...TOPICS.slice(0,-1).map(t=>getTopic(t.id)),...customTopicIds.map(getTopic),getTopic("Other")],[customTopicIds,catRows]);
   useEffect(()=>{ if(topicFilter!=="All"&&!topicList.some(t=>t.id===topicFilter)) setTopicFilter("All"); },[topicList,topicFilter]);
 
   // Filtered by BOTH active language and topic
@@ -884,18 +1031,17 @@ function BiliG() {
     }else toast$(`Couldn't add them — nothing was changed. ${d?.message||d?.msg||"No response from Supabase."}`,"error");
     setDeviceBusy(false);
   };
-  const askAdmin = ()=>{ setAuthView("login"); setAuthError(""); setAuthSuccess(""); setAuthPw(""); setLoginOpen(true); };
+  const askAdmin = (intent="add")=>{ setLoginFor(intent); setAuthView("login"); setAuthError(""); setAuthSuccess(""); setAuthPw(""); setLoginOpen(true); };
   const tryAdd   = ()=>readOnly?askAdmin():openAdd();
-  const tryScan  = ref=>readOnly?askAdmin():ref.current?.click();
-  useEffect(()=>{ if(!readOnly&&loginOpen){ setLoginOpen(false); if(deviceImported()||!deviceRowsToImport().length) openAdd(); } },[readOnly]);
+  useEffect(()=>{ if(!readOnly&&loginOpen){ setLoginOpen(false); if(loginFor==="settings") openSettings(); else if(deviceImported()||!deviceRowsToImport().length) openAdd(); } },[readOnly]);
   const openEdit = p =>{ if(readOnly)return; setEditPhrase(p); setForm({foreign_text:p.foreign_text,native_text:p.native_text,language:p.language,topic:p.topic,notes:p.notes||""}); setImgPreview(null); setView("form"); };
   const saveForm = async()=>{
     if(!form.foreign_text.trim()||!form.native_text.trim()){toast$("Both fields are required","error");return;}
-    if(editPhrase){ await dbUpdate(editPhrase.id,{foreign_text:form.foreign_text,native_text:form.native_text,language:form.language,topic:form.topic,notes:form.notes}); toast$("Updated ✓"); }
+    if(editPhrase){ const ok=await dbUpdate(editPhrase.id,{foreign_text:form.foreign_text,native_text:form.native_text,language:form.language,topic:form.topic,notes:form.notes}); if(!ok){ toast$("Couldn't save that change","error"); return; } toast$("Updated ✓"); }
     else{ await dbInsert({...form,date:todayStr(),srs_reps:0,srs_interval:1,srs_next_review:null,total_reviews:0,good_reviews:0,user_id:session.user?.id}); toast$("Phrase saved ✓"); }
     setView("library");
   };
-  const deletePhrase = async id=>{ await dbDelete(id); setDelConfirm(null); toast$("Deleted","info"); };
+  const deletePhrase = async id=>{ const ok=await dbDelete(id); setDelConfirm(null); if(ok) toast$("Deleted","info"); else toast$("Couldn't delete that phrase","error"); };
 
   // SRS
   const startPractice = mode=>{
@@ -906,7 +1052,7 @@ function BiliG() {
   const handleFlip=()=>{ if(!flipped){setFlipped(true);setShowRating(true);} };
   const handleRating=async rating=>{
     const p=cardDeck[cardIndex], patch=calcNextReview(p,rating);
-    await dbUpdate(p.id,patch);
+    if(!(await dbUpdate(p.id,patch))) toast$("Couldn't save your progress","error");
     setCardDeck(prev=>prev.map(c=>c.id===p.id?{...c,...patch}:c));
     setFlipped(false); setShowRating(false);
     setTimeout(()=>{ if(cardIndex<cardDeck.length-1)setCardIndex(i=>i+1); else{toast$("Session complete! 🎉");setView("library");} },300);
@@ -945,11 +1091,11 @@ function BiliG() {
         foreign_text:r.foreign_text||"", native_text:r.native_text||"",
         language:LANGUAGES.some(l=>l.name===r.language)?r.language:activeLang,
         topic:TOPICS.some(t=>t.id===r.topic&&t.id!=="All")?r.topic:"Other",
-        translated:!!r.translated,
+        translated:!!r.translated, notes:"",
       })));
       else setScanNote(notice||"No study phrases picked out. Add them from what it read below.");
     }catch(err){
-      if(current()) setScanNote(`${err.message} Meanings aren't available, but you can add phrases from what it read and type the meaning.`);
+      if(current()) setScanNote(`${err.message} Translations aren't available, but you can add phrases from what it read and type the translation.`);
     }
     if(current()) setScanBusy(false);
   },[session, activeLang, readOnly]);
@@ -958,7 +1104,7 @@ function BiliG() {
   const addLineAsPhrase = line => setScanRows(rows=>[...rows,{
     key:`line_${Date.now()}_${rows.length}`, keep:true, foreign_text:line, native_text:"",
     language:isArabicScript(line)?"Arabic":(activeLang!=="Arabic"?activeLang:"French"),
-    topic:"Other", translated:false,
+    topic:"Other", translated:false, notes:"",
   }]);
   const meaningTarget = [...scanRows].reverse().find(r=>r.keep&&!r.native_text.trim());
   const useLineAsMeaning = line => meaningTarget && setScanRows(rows=>rows.map(r=>r.key===meaningTarget.key?{...r,native_text:line,translated:false}:r));
@@ -972,7 +1118,7 @@ function BiliG() {
     for(const r of keptRows){
       await dbInsert({
         foreign_text:r.foreign_text.trim(), native_text:r.native_text.trim(),
-        language:r.language, topic:r.topic, notes:"",
+        language:r.language, topic:r.topic, notes:(r.notes||"").trim(),
         date:todayStr(), srs_reps:0, srs_interval:1, srs_next_review:null,
         total_reviews:0, good_reviews:0, user_id:session.user?.id,
       });
@@ -1009,13 +1155,102 @@ function BiliG() {
       setBulkExtra(x=>[...new Set(x.map(t=>t===d.from?name:t))]);
     }else if(d.mode==="add"){
       if(!TOPICS.some(t=>t.id===name)) setBulkExtra(x=>x.includes(name)?x:[...x,name]);
-    }else patchBulkRow(d.key,{topic:name});
+    }else if(d.mode==="manage") applyToSelected({topic:name});
+    else if(d.mode==="form") setForm(f=>({...f,topic:name}));
+    else if(d.mode==="scan") patchScanRow(d.key,{topic:name});
+    else if(d.mode==="mrow") patchManage(d.key,{topic:name});
+    else if(d.mode==="bulkAll") setBulkRows(rows=>rows.map(r=>({...r,topic:name})));
+    else patchBulkRow(d.key,{topic:name});
   };
+  // Every category dropdown ends with "＋ New category…", which opens a small name field under it.
+  const topicOptions = [
+    ...topicList.filter(t=>t.id!=="All").map(t=><option key={t.id} value={t.id}>{t.icon} {t.label}</option>),
+    <option key="__new__" value="__new__">＋ New category…</option>,
+  ];
+  const catDraftRow = (mode,key)=>catDraft?.mode===mode&&catDraft.key===key?(
+    <div style={{display:"flex",gap:8}}>
+      <input autoFocus value={catDraft.value} onChange={e=>setCatDraft({...catDraft,value:e.target.value})} placeholder="New category name" aria-label="New category name"
+        onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); commitCat(); } else if(e.key==="Escape") setCatDraft(null); }} style={{...iSt,padding:"8px 12px",fontSize:12,flex:1}}/>
+      <button type="button" onClick={commitCat} style={{flexShrink:0,background:INK,border:outline(1.5),borderRadius:12,color:"#fff",fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:12,padding:"0 14px",cursor:"pointer"}}>Add</button>
+      <button type="button" onClick={()=>setCatDraft(null)} style={{flexShrink:0,background:"transparent",border:`1px solid ${T.borderMid}`,borderRadius:12,color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:12,padding:"0 12px",cursor:"pointer"}}>Cancel</button>
+    </div>
+  ):null;
+  // ── Settings → Categories: emoji and names, saved in Supabase ──
+  const enc = encodeURIComponent;
+  const saveCatEmoji = async(name,emoji)=>{
+    if(!catsReady){ toast$("Saving an emoji needs the one-time database update first","error"); return false; }
+    const d=await sbFetch("/categories",{method:"POST",headers:{...ah(),Prefer:"resolution=merge-duplicates,return=representation"},body:JSON.stringify({name,emoji,user_id:session.user.id})}).catch(()=>null);
+    if(Array.isArray(d)&&d.length){ CATEGORY_EMOJI={...CATEGORY_EMOJI,[name]:emoji}; setCatRows(r=>[...r.filter(x=>x.name!==name),{name,emoji}]); return true; }
+    toast$(d?.message||"Couldn't save that emoji","error"); return false;
+  };
+  const pickEmoji = async(name,emoji)=>{ setEmojiFor(null); if(await saveCatEmoji(name,emoji)) toast$(`${emoji} saved`); };
+  const renameCat = async(from,raw)=>{
+    setCatNameDraft(d=>{ const n={...d}; delete n[from]; return n; });
+    const to=canonTopic(raw);
+    if(!to||to===from||TOPICS.some(t=>t.id===from)) return;        // built-in names stay as they are
+    setCatBusy(true);
+    const moved=await sbFetch(`/phrases?topic=eq.${enc(from)}`,{method:"PATCH",headers:ah(),body:JSON.stringify({topic:to})}).catch(()=>null);
+    if(!Array.isArray(moved)){ toast$("Couldn't rename that category","error"); setCatBusy(false); return; }
+    const own=catRows.find(r=>r.name===from);
+    if(own){
+      if(catRows.some(r=>r.name===to)) await sbFetch(`/categories?name=eq.${enc(from)}`,{method:"DELETE",headers:ah()}).catch(()=>null);            // merged into one that exists
+      else await sbFetch(`/categories?name=eq.${enc(from)}`,{method:"PATCH",headers:ah(),body:JSON.stringify({name:to})}).catch(()=>null);
+      setCatRows(rows=>{ const rest=rows.filter(r=>r.name!==from); return rest.some(r=>r.name===to)?rest:[...rest,{name:to,emoji:own.emoji}]; });
+      const { [from]:_gone, ...keep }=CATEGORY_EMOJI; CATEGORY_EMOJI={...keep,[to]:CATEGORY_EMOJI[to]||own.emoji};
+    }
+    setPhrases(ps=>ps.map(x=>x.topic===from?{...x,topic:to}:x));
+    setManageEdits(e=>Object.fromEntries(Object.entries(e).map(([id,v])=>[id,v.topic===from?{...v,topic:to}:v])));
+    if(topicFilter===from) setTopicFilter(to);
+    toast$(`Renamed to ${to}`); setCatBusy(false);
+  };
+  const deleteCat = async name=>{
+    setCatBusy(true);
+    const moved=await sbFetch(`/phrases?topic=eq.${enc(name)}`,{method:"PATCH",headers:ah(),body:JSON.stringify({topic:"Other"})}).catch(()=>null);
+    if(!Array.isArray(moved)){ toast$("Couldn't delete that category","error"); setCatBusy(false); setCatDel(null); return; }
+    if(catRows.some(r=>r.name===name)) await sbFetch(`/categories?name=eq.${enc(name)}`,{method:"DELETE",headers:ah()}).catch(()=>null);
+    setPhrases(ps=>ps.map(x=>x.topic===name?{...x,topic:"Other"}:x));
+    setCatRows(rows=>rows.filter(r=>r.name!==name));
+    const { [name]:_gone, ...keep }=CATEGORY_EMOJI; CATEGORY_EMOJI=keep;
+    if(topicFilter===name) setTopicFilter("All");
+    toast$(`${name} deleted. Its phrases moved to Other.`,"info"); setCatBusy(false); setCatDel(null);
+  };
+  const addCat = async()=>{
+    const name=canonTopic(newCat.name);
+    if(!name){ toast$("Type a name for the category first","error"); return; }
+    const emoji=newCat.emoji||getTopic(name).icon;
+    if(await saveCatEmoji(name,emoji)){ setNewCat({name:"",emoji:""}); toast$(`${emoji} ${name} added`); }
+  };
+  const emojiPicker = onPick => (
+    <div style={{marginTop:8,padding:10,border:outline(1.5),borderRadius:12,background:T.surfaceHi}}>
+      <div style={{display:"flex",flexWrap:"wrap",gap:2}}>
+        {EMOJI_CHOICES.map(e=>(
+          <button key={e} type="button" onClick={()=>onPick(e)} aria-label={`Use ${e}`}
+            style={{fontSize:20,width:36,height:36,background:"transparent",border:"none",borderRadius:8,cursor:"pointer",lineHeight:1}}>{e}</button>
+        ))}
+      </div>
+      <input placeholder="…or type or paste any emoji, then press Enter" aria-label="Type an emoji"
+        onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); const m=e.target.value.match(EMOJI_RE); if(m) onPick(m[0]); } }}
+        style={{...iSt,marginTop:8,padding:"8px 12px",fontSize:12}}/>
+    </div>
+  );
+  const settingsHeader = (
+    <div style={{marginBottom:18}}>
+      <button type="button" onClick={()=>setView("library")}
+        style={{background:"none",border:"none",color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600,cursor:"pointer",padding:0,marginBottom:10}}>← Back to the library</button>
+      <div style={{fontSize:9,letterSpacing:4,color:T.lav,fontFamily:"'Syne',sans-serif",textTransform:"uppercase",marginBottom:5}}>Settings</div>
+      <div style={{display:"flex",gap:6,background:T.surfaceHi,border:outline(),borderRadius:14,padding:4,width:"fit-content",boxShadow:drop(2,2)}}>
+        {[["phrases","Phrases"],["categories","Categories"]].map(([k,l])=>(
+          <button key={k} type="button" onClick={()=>{ setSettingsTab(k); setEmojiFor(null); }} aria-pressed={settingsTab===k}
+            style={{background:settingsTab===k?INK:"transparent",color:settingsTab===k?"#fff":INK,border:"none",borderRadius:10,padding:"8px 18px",cursor:"pointer",fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13}}>{l}</button>
+        ))}
+      </div>
+    </div>
+  );
   const removeCat = t=>{ setBulkRows(rows=>rows.map(r=>r.topic===t?{...r,topic:"Other"}:r)); setBulkExtra(x=>x.filter(c=>c!==t)); };
   const bulkKept = bulkRows.filter(r=>r.keep&&r.foreign_text.trim()&&r.native_text.trim());
   const bulkIncomplete = bulkRows.filter(r=>r.keep&&!(r.foreign_text.trim()&&r.native_text.trim())).length;
   const saveBulk = async()=>{
-    if(!bulkKept.length){ toast$("Nothing to add — each ticked phrase needs its text and meaning","error"); return; }
+    if(!bulkKept.length){ toast$("Nothing to add — each ticked phrase needs its text and translation","error"); return; }
     setBulkBusy(true);
     for(const r of bulkKept){
       await dbInsert({
@@ -1029,6 +1264,45 @@ function BiliG() {
     setActiveLang(bulkKept[0].language); setTopicFilter("All"); setStackIdx(0);
     setBulkText(""); setBulkRows([]); setBulkNote(""); setBulkExtra([]); setCatDraft(null); setBulkBusy(false); setView("library");
     toast$(`${n} phrase${n>1?"s":""} added ✓`);
+  };
+
+  // ── Edit many: change fields on lots of saved phrases, or tick some to recategorise / delete them ──
+  const MANAGE_FIELDS = ["foreign_text","native_text","notes","language","topic"];
+  const openSettings = (tab="phrases")=>{
+    if(readOnly)return;
+    setSettingsTab(tab); setManageIds(phrases.filter(p=>p.language===activeLang).map(p=>p.id));
+    setManageSel(new Set()); setManageEdits({}); setManageQ(""); setCatDraft(null); setEmojiFor(null); setView("settings");
+  };
+  const inManage = view==="settings"&&settingsTab==="phrases";
+  const manageRows = useMemo(()=>{ const byId=new Map(phrases.map(p=>[p.id,p])); return manageIds.map(id=>byId.get(id)).filter(Boolean); },[phrases,manageIds]);
+  const manageView = p=>({...p,...(manageEdits[p.id]||{})});
+  const manageChanged = p=>{ const e=manageEdits[p.id]||{}, patch={}; for(const f of MANAGE_FIELDS) if(f in e&&String(e[f]??"").trim()!==String(p[f]??"").trim()) patch[f]=String(e[f]??"").trim(); return patch; };
+  const manageDirty = manageRows.filter(p=>Object.keys(manageChanged(p)).length>0);
+  const manageShown = manageRows.filter(p=>{ const q=manageQ.trim().toLowerCase(); if(!q) return true; const v=manageView(p); return [v.foreign_text,v.native_text,v.notes].some(x=>String(x||"").toLowerCase().includes(q)); });
+  const patchManage = (id,patch)=>setManageEdits(e=>({...e,[id]:{...(e[id]||{}),...patch}}));
+  function applyToSelected(patch){ setManageEdits(e=>{ const n={...e}; manageSel.forEach(id=>{ n[id]={...(n[id]||{}),...patch}; }); return n; }); }
+  const toggleManageSel = (id,on)=>setManageSel(s=>{ const n=new Set(s); if(on) n.add(id); else n.delete(id); return n; });
+  const saveManage = async()=>{
+    if(!manageDirty.length) return;
+    if(manageDirty.some(p=>{ const v=manageView(p); return !String(v.foreign_text||"").trim()||!String(v.native_text||"").trim(); })){ toast$("Every edited phrase needs its text and its translation","error"); return; }
+    setManageBusy(true);
+    const results=await Promise.all(manageDirty.map(p=>dbUpdate(p.id,manageChanged(p))));
+    const failed=manageDirty.filter((p,i)=>!results[i]);
+    setManageEdits(Object.fromEntries(failed.map(p=>[p.id,manageEdits[p.id]])));   // keep the edits that didn't save
+    if(failed.length) toast$(`${manageDirty.length-failed.length} saved, ${failed.length} couldn't be saved. Try signing in again.`,"error");
+    else toast$(`${manageDirty.length} phrase${manageDirty.length>1?"s":""} updated ✓`);
+    setManageBusy(false);
+  };
+  const deleteManage = async()=>{
+    const ids=[...manageSel]; if(!ids.length) return;
+    setManageBusy(true);
+    const results=await Promise.all(ids.map(id=>dbDelete(id)));
+    const gone=new Set(ids.filter((id,i)=>results[i])), failed=ids.length-gone.size;
+    setManageIds(a=>a.filter(id=>!gone.has(id)));
+    setManageSel(new Set(ids.filter(id=>!gone.has(id))));
+    setManageEdits(e=>Object.fromEntries(Object.entries(e).filter(([id])=>!gone.has(id))));
+    setManageDel(false); setManageBusy(false);
+    if(failed) toast$(`${gone.size} deleted, ${failed} couldn't be deleted`,"error"); else toast$(`${gone.size} phrase${gone.size>1?"s":""} deleted`,"info");
   };
 
   // Stack swipe
@@ -1073,9 +1347,9 @@ function BiliG() {
     .cth{transition:all .2s;cursor:pointer;}.cth:hover{transform:translateY(-2px);}
     .gcard{box-shadow:4px 4px 0 ${INK};transition:transform .18s ease,box-shadow .18s ease;}
     .gcard:hover{transform:translate(-3px,-3px);box-shadow:8px 8px 0 ${INK};}
-    .gcard .card-actions{opacity:0;transition:opacity .18s;}
-    .gcard:hover .card-actions,.gcard:focus-within .card-actions{opacity:1;}
-    @media (hover:none){.gcard .card-actions{opacity:1;}}
+    .pcard .card-actions{opacity:0;transition:opacity .18s;}
+    .pcard:hover .card-actions,.pcard:focus-within .card-actions{opacity:1;}
+    @media (hover:none){.pcard .card-actions{opacity:1;}}
     @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important;}}
     .flip-wrap{perspective:1400px;}
     .flip-inner{transition:transform .5s cubic-bezier(.4,0,.2,1);transform-style:preserve-3d;position:relative;}
@@ -1189,8 +1463,11 @@ function BiliG() {
           </div>
         )}
 
-        {/* Lang dropdown */}
-        <div ref={langRef} style={{position:"relative",justifySelf:"end"}}>
+        {/* Settings + language dropdown */}
+        <div style={{display:"flex",alignItems:"center",gap:10,justifySelf:"end"}}>
+        <button onClick={()=>readOnly?askAdmin("settings"):openSettings()} aria-label="Settings" title="Settings"
+          style={{width:38,height:38,borderRadius:"50%",background:T.surface,border:outline(),color:INK,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",boxShadow:drop(3,3),flexShrink:0}}><IconGear size={18}/></button>
+        <div ref={langRef} style={{position:"relative"}}>
           <button onClick={()=>setLangOpen(o=>!o)} style={{background:T.surface,border:outline(),borderRadius:30,padding:"8px 16px 8px 12px",color:INK,fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",gap:7,boxShadow:drop(3,3)}}>
             <span style={{fontSize:14}}>{getLang(activeLang).flag}</span>
             <span style={{color:T.ink,fontWeight:500,fontSize:12}}>{activeLang}</span>
@@ -1218,6 +1495,7 @@ function BiliG() {
               </div>}
             </div>
           )}
+        </div>
         </div>
       </div>
 
@@ -1315,9 +1593,9 @@ function BiliG() {
 
           {/* Grid — every card at once (desktop, opt-in) */}
           {filtered.length>0&&!deckMode&&(
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(310px,1fr))",gap:22,alignItems:"stretch"}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:16,alignItems:"stretch"}}>
               {filtered.map(p=>(
-                <PhraseCard key={p.id} p={p} dense className="gcard" style={{height:404}}
+                <PhraseCard key={p.id} p={p} compact className="gcard"
                   onEdit={readOnly?undefined:openEdit} onDelete={readOnly?undefined:setDelConfirm}/>
               ))}
             </div>
@@ -1374,9 +1652,9 @@ function BiliG() {
           <div className="flip-wrap" style={{width:"100%",maxWidth:isDesktop?540:460,height:isDesktop?330:275,cursor:"pointer"}} onClick={handleFlip}>
             <div className={`flip-inner${flipped?" on":""}`} style={{width:"100%",height:"100%"}}>
               <div className="face" style={{position:"absolute",width:"100%",height:"100%",background:getTopicStyle(fcard?.topic).bg,border:outline(2.5),borderRadius:24,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,boxSizing:"border-box",boxShadow:drop(6,6)}}>
-                <div style={{fontFamily:SERIF,fontStyle:"italic",fontSize:15,color:"rgba(255,255,255,.9)",marginBottom:18}}>{fcard?.language} · {fcard?.topic}</div>
+                <div style={{fontFamily:SERIF,fontStyle:"italic",fontSize:15,color:"rgba(255,255,255,.9)",marginBottom:18}}>{fcard?getTopic(fcard.topic).label:""}</div>
                 <div dir={fcardLang?.rtl?"rtl":"ltr"} style={{fontSize:fcardLang?.rtl?54:40,fontFamily:fcardLang?.rtl?fcardLang?.font:DISPLAY,textAlign:"center",lineHeight:fcardLang?.rtl?1.35:1,width:"100%",color:"#fff",fontWeight:fcardLang?.rtl?700:400,textShadow:"2px 2px 0 rgba(26,24,37,.28)"}}>{fcard?.foreign_text}</div>
-                {fcardTag&&<div style={{marginTop:20,fontSize:11,padding:"4px 14px",borderRadius:20,background:fcardTag.color,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:800,letterSpacing:.5,textTransform:"uppercase",border:outline(2),boxShadow:drop(2,2),transform:"rotate(-6deg)"}}>{fcardTag.label}</div>}
+                {fcardTag&&<div style={{marginTop:20,fontSize:11,padding:"4px 14px",borderRadius:20,background:fcardTag.color,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:800,letterSpacing:.5,textTransform:"uppercase",border:outline(2),boxShadow:drop(2,2)}}>{fcardTag.label}</div>}
                 <div style={{marginTop:24,fontSize:10,color:"rgba(255,255,255,.65)",fontFamily:"'DM Sans',sans-serif"}}>tap to reveal</div>
               </div>
               <div className="face face-b" style={{position:"absolute",width:"100%",height:"100%",background:T.surface,border:outline(2.5),borderRadius:24,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,boxSizing:"border-box",boxShadow:drop(6,6)}}>
@@ -1417,13 +1695,13 @@ function BiliG() {
               <img src={imgPreview} alt="The photo you scanned" style={{width:96,height:96,objectFit:"cover",borderRadius:14,border:outline(),boxShadow:drop(3,3)}}/>
               <div style={{fontSize:12,color:T.muted,fontFamily:SERIF,fontStyle:"italic",lineHeight:1.5,paddingTop:4}}>
                 Untick anything you don't want, fix any misread text, then add them to your diary.
-                <br/>✨ marks a meaning written by the scanner rather than read off the page.
+                <br/>✨ marks a translation written by the scanner rather than read off the page.
               </div>
             </div>
           )}
 
           {scanBusy&&!scanRows.length&&(
-            <div className="blink" style={{fontSize:13,color:T.lav,fontFamily:"'DM Sans',sans-serif",padding:"4px 0 16px"}}>✨ Picking out phrases and meanings…</div>
+            <div className="blink" style={{fontSize:13,color:T.lav,fontFamily:"'DM Sans',sans-serif",padding:"4px 0 16px"}}>✨ Picking out phrases and translations…</div>
           )}
 
           {scanError&&(
@@ -1434,30 +1712,40 @@ function BiliG() {
           )}
 
           {scanRows.map(r=>{
-            const rl=getLang(r.language);
+            const rl=getLang(r.language), noText=!r.foreign_text.trim(), noMeaning=!r.native_text.trim();
             return (
-              <div key={r.key} style={{border:outline(),borderRadius:16,background:r.keep?T.surface:"transparent",boxShadow:r.keep?drop(3,3):"none",padding:"12px 14px",marginBottom:11,opacity:r.keep?1:.55,transition:"all .15s"}}>
-                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:r.keep?10:0}}>
+              <div key={r.key} style={{border:outline(),borderRadius:16,background:r.keep?T.surface:"transparent",boxShadow:r.keep?drop(3,3):"none",padding:"10px 12px",marginBottom:9,opacity:r.keep?1:.55,transition:"all .15s"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:r.keep?8:0}}>
                   <input type="checkbox" checked={r.keep} onChange={e=>patchScanRow(r.key,{keep:e.target.checked})}
-                    aria-label={`Keep ${r.foreign_text}`} style={{width:17,height:17,accentColor:INK,cursor:"pointer",flexShrink:0}}/>
-                  <div dir={rl.rtl?"rtl":"ltr"} style={{flex:1,minWidth:0,fontFamily:rl.font,fontSize:rl.rtl?22:16,fontWeight:700,color:INK,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:rl.rtl?"right":"left"}}>{r.foreign_text||"—"}</div>
-                  {r.translated&&<span title="Meaning written by the scanner" style={{fontSize:9,padding:"2px 8px",borderRadius:20,background:"#ffd97a",border:outline(1.5),fontFamily:"'DM Sans',sans-serif",fontWeight:600,color:INK,flexShrink:0}}>✨</span>}
+                    aria-label={`Keep ${r.foreign_text||r.native_text}`} style={{width:17,height:17,accentColor:INK,cursor:"pointer",flexShrink:0}}/>
+                  {r.keep?(
+                    <input value={r.foreign_text} onChange={e=>patchScanRow(r.key,{foreign_text:e.target.value})}
+                      dir={rl.rtl?"rtl":"ltr"} placeholder="The phrase — needed to save" aria-label="Phrase"
+                      style={{...iSt,flex:1,minWidth:0,width:"auto",fontFamily:rl.font,fontSize:rl.rtl?20:14,textAlign:rl.rtl?"right":"left",padding:"8px 12px",borderColor:noText?"#e2a13c":undefined}}/>
+                  ):(
+                    <div dir={rl.rtl?"rtl":"ltr"} style={{flex:1,minWidth:0,fontFamily:rl.font,fontSize:rl.rtl?20:15,fontWeight:700,color:INK,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:rl.rtl?"right":"left"}}>{r.foreign_text||r.native_text||"—"}</div>
+                  )}
                 </div>
                 {r.keep&&(
                   <div style={{display:"flex",flexDirection:"column",gap:8,paddingLeft:27}}>
-                    <input value={r.foreign_text} onChange={e=>patchScanRow(r.key,{foreign_text:e.target.value})}
-                      dir={rl.rtl?"rtl":"ltr"} aria-label="Phrase"
-                      style={{...iSt,fontFamily:rl.font,fontSize:rl.rtl?20:14,textAlign:rl.rtl?"right":"left",padding:"9px 12px"}}/>
-                    <input value={r.native_text} onChange={e=>patchScanRow(r.key,{native_text:e.target.value,translated:false})}
-                      placeholder="Type the meaning — needed to save" aria-label="Meaning" style={{...iSt,padding:"9px 12px",borderColor:r.native_text.trim()?undefined:"#e2a13c"}}/>
-                    <div style={{display:"flex",gap:8}}>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <input value={r.native_text} onChange={e=>patchScanRow(r.key,{native_text:e.target.value,translated:false})}
+                        placeholder="Translation" aria-label="Translation" style={{...iSt,flex:1,minWidth:0,width:"auto",padding:"8px 10px",fontSize:13,borderColor:noMeaning?"#e2a13c":undefined}}/>
+                      {r.translated&&<span title="Translation written by the scanner, not read off the page" style={{fontSize:11,flexShrink:0}}>✨</span>}
+                      <button type="button" onClick={()=>patchScanRow(r.key,{native_text:r.notes||"",notes:r.native_text,translated:false})} title="Swap the translation and the transliteration" aria-label="Swap translation and transliteration"
+                        style={{flexShrink:0,background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:10,padding:"0 9px",alignSelf:"stretch",fontSize:14,color:T.inkMid,cursor:"pointer"}}>⇄</button>
+                      <input value={r.notes||""} onChange={e=>patchScanRow(r.key,{notes:e.target.value})}
+                        placeholder="Transliteration" aria-label="Transliteration" style={{...iSt,flex:1,minWidth:0,width:"auto",padding:"8px 10px",fontSize:13}}/>
+                    </div>
+                    <div style={{display:"flex",gap:6}}>
                       <select value={r.language} onChange={e=>patchScanRow(r.key,{language:e.target.value})} aria-label="Language" style={{...iSt,padding:"8px 10px",fontSize:12,flex:1}}>
                         {LANGUAGES.map(l=><option key={l.name} value={l.name}>{l.flag} {l.name}</option>)}
                       </select>
-                      <select value={r.topic} onChange={e=>patchScanRow(r.key,{topic:e.target.value})} aria-label="Topic" style={{...iSt,padding:"8px 10px",fontSize:12,flex:1}}>
-                        {topicList.filter(t=>t.id!=="All").map(t=><option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
+                      <select value={r.topic} onChange={e=>{ const v=e.target.value; if(v==="__new__") setCatDraft({mode:"scan",key:r.key,value:""}); else patchScanRow(r.key,{topic:v}); }} aria-label="Category" style={{...iSt,padding:"8px 10px",fontSize:12,flex:1}}>
+                        {topicOptions}
                       </select>
                     </div>
+                    {catDraftRow("scan",r.key)}
                   </div>
                 )}
               </div>
@@ -1480,8 +1768,8 @@ function BiliG() {
                     <div dir="auto" style={{flex:1,minWidth:0,fontFamily:ar?"'Scheherazade New',serif":"'DM Sans',sans-serif",fontSize:ar?20:14,color:INK,lineHeight:1.35,overflowWrap:"anywhere"}}>{line}</div>
                     {used?<span style={{fontSize:11,color:T.muted,fontFamily:"'DM Sans',sans-serif"}}>added ✓</span>:<>
                       {meaningTarget&&(
-                        <button onClick={()=>useLineAsMeaning(line)} title={`Use as the meaning of ${meaningTarget.foreign_text}`}
-                          style={{flexShrink:0,background:"transparent",border:`1px solid ${T.borderMid}`,borderRadius:9,padding:"5px 9px",fontSize:11,fontFamily:"'DM Sans',sans-serif",color:T.inkMid,cursor:"pointer"}}>as meaning</button>
+                        <button onClick={()=>useLineAsMeaning(line)} title={`Use as the translation of ${meaningTarget.foreign_text}`}
+                          style={{flexShrink:0,background:"transparent",border:`1px solid ${T.borderMid}`,borderRadius:9,padding:"5px 9px",fontSize:11,fontFamily:"'DM Sans',sans-serif",color:T.inkMid,cursor:"pointer"}}>as translation</button>
                       )}
                       <button onClick={()=>addLineAsPhrase(line)}
                         style={{flexShrink:0,background:INK,border:outline(1.5),borderRadius:9,padding:"5px 10px",fontSize:11,fontFamily:"'DM Sans',sans-serif",fontWeight:600,color:"#fff",cursor:"pointer"}}>+ phrase</button>
@@ -1552,20 +1840,21 @@ function BiliG() {
           </div>
 
           <div style={{marginBottom:13}}>
-            <label style={lSt}>Your Translation</label>
+            <label style={lSt}>Translation</label>
             <input value={form.native_text} onChange={e=>setForm(p=>({...p,native_text:e.target.value}))} placeholder="e.g. Good morning" style={iSt}/>
           </div>
 
           <div style={{marginBottom:13}}>
-            <label style={lSt}>Topic</label>
-            <select value={form.topic} onChange={e=>setForm(p=>({...p,topic:e.target.value}))} style={iSt}>
-              {topicList.filter(t=>t.id!=="All").map(t=><option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
-            </select>
+            <label style={lSt}>Transliteration</label>
+            <input value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))} placeholder="e.g. sabah al-khayr" style={iSt}/>
           </div>
 
           <div style={{marginBottom:22}}>
-            <label style={lSt}>Notes (optional)</label>
-            <textarea value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))} placeholder="Context, pronunciation tips, memory tricks…" rows={3} style={{...iSt,resize:"vertical",fontSize:13}}/>
+            <label style={lSt}>Category</label>
+            <select value={form.topic} onChange={e=>{ const v=e.target.value; if(v==="__new__") setCatDraft({mode:"form",key:"form",value:""}); else setForm(p=>({...p,topic:v})); }} style={iSt}>
+              {topicOptions}
+            </select>
+            {catDraft?.mode==="form"&&<div style={{marginTop:8}}>{catDraftRow("form","form")}</div>}
           </div>
 
           <div style={{display:"flex",gap:10}}>
@@ -1600,18 +1889,19 @@ function BiliG() {
           </>):(<>
             <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:16}}>
               <div style={{flex:1,minWidth:150,fontSize:12,color:T.muted,fontFamily:SERIF,fontStyle:"italic",lineHeight:1.5}}>
-                Untick anything you don't want and fix any wrong split. If the meaning and transliteration came out the wrong way round, use ⇄. Each phrase has its own category.
-                {bulkIncomplete>0&&<><br/><span style={{color:"#b45309",fontStyle:"normal",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>{bulkIncomplete} still need{bulkIncomplete===1?"s":""} a phrase or meaning.</span></>}
+                Untick anything you don't want and fix any wrong split. If the translation and transliteration came out the wrong way round, use ⇄. Each phrase has its own category.
+                {bulkIncomplete>0&&<><br/><span style={{color:"#b45309",fontStyle:"normal",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>{bulkIncomplete} still need{bulkIncomplete===1?"s":""} a phrase or translation.</span></>}
               </div>
-              <button type="button" onClick={()=>setBulkRows(rows=>rows.map(r=>({...r,native_text:r.notes,notes:r.native_text})))} title="Swap meaning and transliteration on every phrase"
+              <button type="button" onClick={()=>setBulkRows(rows=>rows.map(r=>({...r,native_text:r.notes,notes:r.native_text})))} title="Swap translation and transliteration on every phrase"
                 style={{...iSt,width:"auto",padding:"8px 10px",fontSize:12,flexShrink:0,cursor:"pointer"}}>⇄ Swap all</button>
-              <select value="" onChange={e=>{ const v=e.target.value; if(v) setBulkRows(rows=>rows.map(r=>({...r,topic:v}))); }} aria-label="Set the category of every phrase"
+              <select value="" onChange={e=>{ const v=e.target.value; if(v==="__new__") setCatDraft({mode:"bulkAll",key:"all",value:""}); else if(v) setBulkRows(rows=>rows.map(r=>({...r,topic:v}))); }} aria-label="Set the category of every phrase"
                 style={{...iSt,width:"auto",padding:"8px 10px",fontSize:12,flexShrink:0}}>
                 <option value="">Set all categories…</option>
-                {topicList.filter(t=>t.id!=="All").map(t=><option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
+                {topicOptions}
               </select>
             </div>
 
+            {catDraft?.mode==="bulkAll"&&<div style={{marginBottom:14}}>{catDraftRow("bulkAll","all")}</div>}
             {bulkNote&&<div style={{fontSize:12,color:INK,background:T.lavLight,border:outline(1.5),borderRadius:12,padding:"10px 13px",fontFamily:"'DM Sans',sans-serif",marginBottom:14,lineHeight:1.5}}>{bulkNote}</div>}
 
             <div style={{border:outline(),borderRadius:16,background:T.surface,boxShadow:drop(3,3),padding:"12px 14px",marginBottom:16}}>
@@ -1675,8 +1965,8 @@ function BiliG() {
                     <div style={{display:"flex",flexDirection:"column",gap:8,paddingLeft:27}}>
                       <div style={{display:"flex",gap:6}}>
                         <input value={r.native_text} onChange={e=>patchBulkRow(r.key,{native_text:e.target.value})}
-                          placeholder="Meaning" aria-label="Meaning" style={{...iSt,flex:1,minWidth:0,width:"auto",padding:"8px 10px",fontSize:13,borderColor:noMeaning?"#e2a13c":undefined}}/>
-                        <button type="button" onClick={()=>patchBulkRow(r.key,{native_text:r.notes,notes:r.native_text})} title="Swap the meaning and the transliteration" aria-label="Swap meaning and transliteration"
+                          placeholder="Translation" aria-label="Translation" style={{...iSt,flex:1,minWidth:0,width:"auto",padding:"8px 10px",fontSize:13,borderColor:noMeaning?"#e2a13c":undefined}}/>
+                        <button type="button" onClick={()=>patchBulkRow(r.key,{native_text:r.notes,notes:r.native_text})} title="Swap the translation and the transliteration" aria-label="Swap translation and transliteration"
                           style={{flexShrink:0,background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:10,padding:"0 9px",fontSize:14,color:T.inkMid,cursor:"pointer"}}>⇄</button>
                         <input value={r.notes} onChange={e=>patchBulkRow(r.key,{notes:e.target.value})}
                           placeholder="Transliteration" aria-label="Transliteration or notes" style={{...iSt,flex:1,minWidth:0,width:"auto",padding:"8px 10px",fontSize:13}}/>
@@ -1724,16 +2014,176 @@ function BiliG() {
         </div>
       )}
 
+      {/* ══ SETTINGS · CATEGORIES ══ */}
+      {view==="settings"&&settingsTab==="categories"&&(
+        <div style={{padding:isDesktop?"36px 40px 100px":"20px 22px 100px",animation:"up .3s ease",maxWidth:isDesktop?720:560,marginLeft:isDesktop?"auto":0,marginRight:isDesktop?"auto":0,position:"relative",zIndex:1}}>
+          {settingsHeader}
+          <div style={{fontSize:isDesktop?22:19,fontWeight:800,fontFamily:"'Syne',sans-serif",marginBottom:8,color:INK,letterSpacing:"-.6px"}}>Categories</div>
+          <div style={{fontSize:12,color:T.muted,fontFamily:SERIF,fontStyle:"italic",lineHeight:1.55,marginBottom:14}}>Pick the emoji for each category. Card colours follow it. Your own categories can be renamed or deleted; the built-in ones keep their names.</div>
+          {!catsReady&&<div style={{fontSize:12,color:INK,background:"#fff4d6",border:outline(1.5),borderRadius:12,padding:"10px 13px",fontFamily:"'DM Sans',sans-serif",marginBottom:14,lineHeight:1.5}}>Choosing an emoji, and keeping a category that has no phrases yet, needs a one-time update to the database (a small categories table). Renaming and deleting your own categories works without it.</div>}
+
+          <div style={{border:outline(),borderRadius:16,background:T.surface,boxShadow:drop(3,3),padding:"12px 14px",marginBottom:16}}>
+            <div style={{fontSize:9,letterSpacing:2.5,color:T.muted,fontFamily:"'Syne',sans-serif",fontWeight:700,textTransform:"uppercase",marginBottom:9}}>Add a category</div>
+            <div style={{display:"flex",gap:8}}>
+              <button type="button" onClick={()=>setEmojiFor(f=>f==="__new__"?null:"__new__")} aria-label="Choose an emoji"
+                style={{width:42,height:42,flexShrink:0,fontSize:22,lineHeight:1,background:T.surfaceHi,border:`1px solid ${T.borderMid}`,borderRadius:12,cursor:"pointer"}}>{newCat.emoji||getTopic(canonTopic(newCat.name)||"__none__").icon}</button>
+              <input value={newCat.name} onChange={e=>setNewCat(c=>({...c,name:e.target.value}))} onKeyDown={e=>{ if(e.key==="Enter") addCat(); }} placeholder="New category name" aria-label="New category name" style={{...iSt,flex:1,padding:"9px 12px"}}/>
+              <button type="button" onClick={addCat} disabled={catBusy} style={{flexShrink:0,background:INK,border:outline(1.5),borderRadius:12,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:13,padding:"0 16px",cursor:"pointer"}}>Add</button>
+            </div>
+            {emojiFor==="__new__"&&emojiPicker(e=>{ setNewCat(c=>({...c,emoji:e})); setEmojiFor(null); })}
+          </div>
+
+          {topicList.filter(t=>t.id!=="All").map(t=>{
+            const custom=!TOPICS.some(b=>b.id===t.id), n=phrases.filter(x=>x.topic===t.id).length;
+            return (
+              <div key={t.id} style={{border:outline(1.5),borderRadius:14,background:T.surface,padding:"8px 10px",marginBottom:8}}>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <button type="button" onClick={()=>setEmojiFor(f=>f===t.id?null:t.id)} aria-label={`Change the emoji for ${t.label}`} title="Change emoji"
+                    style={{width:42,height:42,flexShrink:0,fontSize:22,lineHeight:1,background:getTopicStyle(t.id).bg,border:outline(1.5),borderRadius:12,cursor:"pointer"}}>{t.icon}</button>
+                  {custom?(
+                    <input value={catNameDraft[t.id]??t.label} onChange={e=>setCatNameDraft(d=>({...d,[t.id]:e.target.value}))}
+                      onBlur={()=>{ const v=catNameDraft[t.id]; if(v!==undefined&&v.trim()&&v.trim()!==t.label) renameCat(t.id,v); else setCatNameDraft(d=>{ const x={...d}; delete x[t.id]; return x; }); }}
+                      onKeyDown={e=>{ if(e.key==="Enter") e.target.blur(); else if(e.key==="Escape"){ setCatNameDraft(d=>{ const x={...d}; delete x[t.id]; return x; }); e.target.blur(); } }}
+                      aria-label={`Name of ${t.label}`} disabled={catBusy} style={{...iSt,flex:1,minWidth:0,padding:"8px 12px",fontSize:14,fontWeight:600}}/>
+                  ):(
+                    <div style={{flex:1,minWidth:0,fontSize:14,fontWeight:600,fontFamily:"'DM Sans',sans-serif",color:INK}}>{t.label} <span style={{fontSize:10,color:T.muted,fontWeight:500}}>built in</span></div>
+                  )}
+                  <span style={{fontSize:11,color:T.muted,fontFamily:"'DM Sans',sans-serif",flexShrink:0}}>{n} phrase{n===1?"":"s"}</span>
+                  {custom&&<button type="button" onClick={()=>setCatDel(t.id)} aria-label={`Delete ${t.label}`} title="Delete category"
+                    style={{background:"none",border:"none",color:INK,cursor:"pointer",padding:6,borderRadius:8,display:"flex",flexShrink:0}}><IconTrash size={16}/></button>}
+                </div>
+                {emojiFor===t.id&&emojiPicker(e=>pickEmoji(t.id,e))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {catDel&&view==="settings"&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.35)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",padding:24}} onClick={()=>!catBusy&&setCatDel(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:20,padding:24,maxWidth:300,width:"100%",animation:"pop .2s ease",boxShadow:"0 20px 60px rgba(0,0,0,.15)"}}>
+            <div style={{fontSize:17,fontWeight:800,fontFamily:"'Syne',sans-serif",marginBottom:6,color:T.ink}}>Delete {catDel}?</div>
+            <div style={{fontSize:12,color:T.muted,fontFamily:"'DM Sans',sans-serif",marginBottom:20}}>{phrases.filter(x=>x.topic===catDel).length} phrase{phrases.filter(x=>x.topic===catDel).length===1?"":"s"} in it will move to Other. The phrases themselves are kept.</div>
+            <div style={{display:"flex",gap:9}}>
+              <button onClick={()=>deleteCat(catDel)} disabled={catBusy} style={{flex:1,background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:12,color:"#dc2626",padding:"11px",cursor:"pointer",fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,opacity:catBusy?.6:1}}>{catBusy?"Deleting…":"Delete"}</button>
+              <button onClick={()=>setCatDel(null)} disabled={catBusy} style={{flex:1,background:T.surfaceHi,border:`1px solid ${T.border}`,borderRadius:12,color:T.muted,padding:"11px",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontSize:13}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ SETTINGS · PHRASES (edit many) ══ */}
+      {inManage&&(
+        <div style={{padding:isDesktop?"36px 40px 140px":"20px 22px 130px",animation:"up .3s ease",maxWidth:isDesktop?940:560,marginLeft:isDesktop?"auto":0,marginRight:isDesktop?"auto":0,position:"relative",zIndex:1}}>
+          {settingsHeader}
+          <div style={{fontSize:isDesktop?22:19,fontWeight:800,fontFamily:"'Syne',sans-serif",marginBottom:8,color:INK,letterSpacing:"-.6px"}}>{manageRows.length} {activeLang} phrase{manageRows.length===1?"":"s"}</div>
+          <div style={{fontSize:12,color:T.muted,fontFamily:SERIF,fontStyle:"italic",lineHeight:1.55,marginBottom:14}}>Change any field, or tick phrases to give them a category or delete them together. Edited rows turn yellow. Nothing is saved until you press Save.</div>
+
+          <input value={manageQ} onChange={e=>setManageQ(e.target.value)} placeholder="Search these phrases…" aria-label="Search phrases" style={{...iSt,marginBottom:12,padding:"10px 14px"}}/>
+
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+            <span style={{flex:1,fontSize:12,color:T.muted,fontFamily:"'DM Sans',sans-serif"}}>{manageSel.size} of {manageRows.length} selected{manageQ.trim()?` · ${manageShown.length} shown`:""}</span>
+            <button type="button" onClick={()=>setManageSel(s=>new Set([...s,...manageShown.map(p=>p.id)]))} disabled={!manageShown.length}
+              style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:10,padding:"6px 12px",fontSize:12,fontFamily:"'DM Sans',sans-serif",fontWeight:600,color:INK,cursor:"pointer"}}>Select all</button>
+            <button type="button" onClick={()=>setManageSel(new Set())} disabled={!manageSel.size}
+              style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:10,padding:"6px 12px",fontSize:12,fontFamily:"'DM Sans',sans-serif",fontWeight:600,color:INK,cursor:"pointer",opacity:manageSel.size?1:.45}}>Deselect all</button>
+          </div>
+
+          {manageSel.size>0&&(
+            <div style={{border:outline(),borderRadius:14,background:T.lavLight,padding:"10px 12px",marginBottom:14,display:"flex",flexWrap:"wrap",gap:8,alignItems:"center"}}>
+              <span style={{fontSize:12,fontWeight:700,fontFamily:"'Syne',sans-serif",color:INK}}>{manageSel.size} selected</span>
+              <select value="" aria-label="Set the category of the selected phrases"
+                onChange={e=>{ const v=e.target.value; if(v==="__new__") setCatDraft({mode:"manage",value:""}); else if(v) applyToSelected({topic:v}); }}
+                style={{...iSt,width:"auto",padding:"7px 10px",fontSize:12}}>
+                <option value="">Set category…</option>
+                {topicList.filter(t=>t.id!=="All").map(t=><option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
+                <option value="__new__">＋ New category…</option>
+              </select>
+              <select value="" aria-label="Set the language of the selected phrases" onChange={e=>{ if(e.target.value) applyToSelected({language:e.target.value}); }}
+                style={{...iSt,width:"auto",padding:"7px 10px",fontSize:12}}>
+                <option value="">Set language…</option>
+                {LANGUAGES.map(l=><option key={l.name} value={l.name}>{l.flag} {l.name}</option>)}
+              </select>
+              <button type="button" onClick={()=>setManageDel(true)}
+                style={{marginLeft:"auto",background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:10,color:"#dc2626",padding:"7px 12px",cursor:"pointer",fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:12}}>🗑 Delete</button>
+              {catDraft?.mode==="manage"&&(
+                <div style={{display:"flex",gap:8,flexBasis:"100%"}}>
+                  <input autoFocus value={catDraft.value} onChange={e=>setCatDraft({...catDraft,value:e.target.value})} placeholder="New category name" aria-label="New category name"
+                    onKeyDown={e=>{ if(e.key==="Enter") commitCat(); else if(e.key==="Escape") setCatDraft(null); }} style={{...iSt,padding:"7px 12px",fontSize:12,flex:1}}/>
+                  <button type="button" onClick={commitCat} style={{flexShrink:0,background:INK,border:outline(1.5),borderRadius:10,color:"#fff",fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:12,padding:"0 14px",cursor:"pointer"}}>Apply</button>
+                  <button type="button" onClick={()=>setCatDraft(null)} style={{flexShrink:0,background:"transparent",border:`1px solid ${T.borderMid}`,borderRadius:10,color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:12,padding:"0 12px",cursor:"pointer"}}>Cancel</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {manageShown.map(p=>{
+            const v=manageView(p), rl=getLang(v.language), sel=manageSel.has(p.id), dirty=Object.keys(manageChanged(p)).length>0;
+            const noText=!String(v.foreign_text||"").trim(), noMeaning=!String(v.native_text||"").trim();
+            const mi={...iSt,width:"auto",minWidth:0,flex:1,padding:"7px 10px",fontSize:13};
+            const phraseIn=<input value={v.foreign_text||""} onChange={e=>patchManage(p.id,{foreign_text:e.target.value})} dir={rl.rtl?"rtl":"ltr"} aria-label="Phrase" placeholder="The phrase"
+              style={{...mi,fontFamily:rl.font,fontSize:rl.rtl?18:14,textAlign:rl.rtl?"right":"left",borderColor:noText?"#e2a13c":undefined}}/>;
+            const meaningIn=<input value={v.native_text||""} onChange={e=>patchManage(p.id,{native_text:e.target.value})} aria-label="Translation" placeholder="Translation" style={{...mi,borderColor:noMeaning?"#e2a13c":undefined}}/>;
+            const notesIn=<input value={v.notes||""} onChange={e=>patchManage(p.id,{notes:e.target.value})} aria-label="Transliteration or notes" placeholder="Transliteration" style={mi}/>;
+            const topicSel=<select value={v.topic} onChange={e=>{ const nv=e.target.value; if(nv==="__new__") setCatDraft({mode:"mrow",key:p.id,value:""}); else patchManage(p.id,{topic:nv}); }} aria-label="Category" style={{...mi,flex:isDesktop?"none":1,width:isDesktop?150:"auto",fontSize:12}}>
+              {topicOptions}</select>;
+            const langSel=<select value={v.language} onChange={e=>patchManage(p.id,{language:e.target.value})} aria-label="Language" style={{...mi,fontSize:12}}>
+              {LANGUAGES.map(l=><option key={l.name} value={l.name}>{l.flag} {l.name}</option>)}</select>;
+            return (
+              <div key={p.id} style={{border:outline(1.5),borderRadius:14,background:sel?T.lavLight:dirty?"#fff8e6":T.surface,padding:"8px 10px",marginBottom:8}}>
+               <div style={{display:"flex",alignItems:isDesktop?"center":"flex-start",gap:10}}>
+                <input type="checkbox" checked={sel} onChange={e=>toggleManageSel(p.id,e.target.checked)} aria-label={`Select ${v.foreign_text||v.native_text}`} style={{width:17,height:17,accentColor:INK,cursor:"pointer",flexShrink:0,marginTop:isDesktop?0:9}}/>
+                {isDesktop?(
+                  <div style={{flex:1,minWidth:0,display:"grid",gridTemplateColumns:"1.1fr 1.1fr 1fr auto",gap:8,alignItems:"center"}}>{phraseIn}{meaningIn}{notesIn}{topicSel}</div>
+                ):(
+                  <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",gap:6}}>
+                    {phraseIn}
+                    <div style={{display:"flex",gap:6}}>{meaningIn}{notesIn}</div>
+                    <div style={{display:"flex",gap:6}}>{langSel}{topicSel}</div>
+                  </div>
+                )}
+               </div>
+               {catDraft?.mode==="mrow"&&catDraft.key===p.id&&<div style={{marginTop:8}}>{catDraftRow("mrow",p.id)}</div>}
+              </div>
+            );
+          })}
+          {!manageShown.length&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:13}}>{manageRows.length?"No phrases match your search":"No phrases left here"}</div>}
+        </div>
+      )}
+      {inManage&&(
+        <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:50,padding:isDesktop?"22px 40px 26px":"20px 22px 24px",background:`linear-gradient(to top,${T.bg} 72%,transparent 100%)`}}>
+          <div style={{maxWidth:isDesktop?860:516,margin:isDesktop?"0 auto":0,display:"flex",gap:10}}>
+            <button onClick={saveManage} disabled={manageBusy||!manageDirty.length}
+              style={{flex:1,background:INK,border:outline(),borderRadius:14,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:14,padding:"14px",cursor:"pointer",boxShadow:drop(4,4),opacity:manageBusy||!manageDirty.length?.5:1}}>
+              {manageBusy?"Saving…":manageDirty.length?`Save ${manageDirty.length} change${manageDirty.length===1?"":"s"}`:"No changes yet"}
+            </button>
+            <button onClick={()=>setView("library")} disabled={manageBusy}
+              style={{background:T.surface,border:outline(),borderRadius:14,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:14,padding:"14px 18px",cursor:"pointer",boxShadow:drop(3,3)}}>{manageDirty.length?"Discard":"Done"}</button>
+          </div>
+        </div>
+      )}
+      {manageDel&&inManage&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.35)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",padding:24}} onClick={()=>!manageBusy&&setManageDel(false)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:20,padding:24,maxWidth:300,width:"100%",animation:"pop .2s ease",boxShadow:"0 20px 60px rgba(0,0,0,.15)"}}>
+            <div style={{fontSize:17,fontWeight:800,fontFamily:"'Syne',sans-serif",marginBottom:6,color:T.ink}}>Delete {manageSel.size} phrase{manageSel.size===1?"":"s"}?</div>
+            <div style={{fontSize:12,color:T.muted,fontFamily:"'DM Sans',sans-serif",marginBottom:20}}>They're removed permanently and can't be brought back.</div>
+            <div style={{display:"flex",gap:9}}>
+              <button onClick={deleteManage} disabled={manageBusy} style={{flex:1,background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:12,color:"#dc2626",padding:"11px",cursor:"pointer",fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,opacity:manageBusy?.6:1}}>{manageBusy?"Deleting…":"Delete"}</button>
+              <button onClick={()=>setManageDel(false)} disabled={manageBusy} style={{flex:1,background:T.surfaceHi,border:`1px solid ${T.border}`,borderRadius:12,color:T.muted,padding:"11px",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontSize:13}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ══ BOTTOM BAR — desktop ══ */}
       {view==="library"&&isDesktop&&(
         <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:50,padding:"20px 40px 28px",background:`linear-gradient(to top,${T.bg} 65%,transparent 100%)`}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:18}}>
             {[
-              {key:"practice", icon:"🃏", label:"Practice",   onClick:()=>startPractice("all"), bg:T.surface, fg:INK},
-              {key:"due",      icon:"⚡", label:"Review Due", onClick:()=>startPractice("due"), bg:INK,       fg:"#fff", badge:dueCount},
-              {key:"scan",     icon:"📷", label:"Scan",       onClick:()=>tryScan(fileRef), bg:T.surface, fg:INK},
+              // Once today's review is done there is nothing due: Practice takes Review's place.
+              {key:"practice", icon:"🃏", label:"Practice",   onClick:()=>startPractice("all"), bg:dueCount>0?T.surface:INK, fg:dueCount>0?INK:"#fff"},
+              {key:"due",      icon:"⚡", label:"Review",     onClick:()=>startPractice("due"), bg:INK,       fg:"#fff", badge:dueCount},
               {key:"add",      icon:"+",  label:"Add phrase", onClick:tryAdd,                   bg:T.pink,    fg:"#fff", strong:true},
-            ].map(b=>(
+            ].filter(b=>b.key!=="due"||dueCount>0).map(b=>(
               <button key={b.key} className="cth" onClick={b.onClick}
                 style={{background:b.bg,border:outline(2.5),borderRadius:18,color:b.fg,fontFamily:"'Syne',sans-serif",fontWeight:b.strong?800:700,fontSize:15,
                         padding:"15px 28px",display:"flex",alignItems:"center",gap:10,boxShadow:drop(4,4),cursor:"pointer",whiteSpace:"nowrap"}}>
@@ -1751,32 +2201,36 @@ function BiliG() {
         <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:50,padding:"12px 22px 28px",background:`linear-gradient(to top,${T.bg} 60%,transparent 100%)`}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:9}}>
 
-            {/* Review Due */}
-            <button className="cth" onClick={()=>startPractice("due")}
-              style={{flex:1,background:dueCount>0?INK:T.surface,border:outline(),borderRadius:18,color:dueCount>0?"#fff":INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"14px 8px",display:"flex",alignItems:"center",justifyContent:"center",gap:5,boxShadow:drop(3,3)}}>
-              <span>⚡</span>
-              <span>Due</span>
-              {dueCount>0&&<span style={{background:"rgba(255,255,255,.15)",borderRadius:20,padding:"1px 7px",fontSize:11}}>{dueCount}</span>}
-            </button>
+            {/* Review — once today's review is done, Practice takes its place */}
+            {dueCount>0?(
+              <button className="cth" onClick={()=>startPractice("due")}
+                style={{flex:1,background:INK,border:outline(),borderRadius:18,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"14px 8px",display:"flex",alignItems:"center",justifyContent:"center",gap:5,boxShadow:drop(3,3)}}>
+                <span>⚡</span>
+                <span>Review</span>
+                <span style={{background:"rgba(255,255,255,.15)",borderRadius:20,padding:"1px 7px",fontSize:11}}>{dueCount}</span>
+              </button>
+            ):(
+              <button className="cth" onClick={()=>startPractice("all")}
+                style={{flex:1,background:INK,border:outline(),borderRadius:18,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"14px 8px",display:"flex",alignItems:"center",justifyContent:"center",gap:5,boxShadow:drop(3,3)}}>
+                <span>🃏</span>
+                <span>Practice</span>
+              </button>
+            )}
 
-            {/* Scan — the primary way phrases arrive */}
-            <button className="plus-fab" onClick={()=>tryScan(camRef)} aria-label="Scan a photo"
-              style={{width:58,height:58,borderRadius:"50%",background:T.pink,border:outline(2.5),color:"#fff",fontSize:24,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:drop(3,4),flexShrink:0}}>
-              📷
-            </button>
-
-            {/* Type one out */}
-            <button className="plus-fab" onClick={tryAdd} aria-label="Add a phrase by typing"
-              style={{width:48,height:48,borderRadius:"50%",background:T.surface,border:outline(2.5),color:INK,fontSize:24,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:drop(3,3),flexShrink:0,fontWeight:400}}>
+            {/* Add a phrase (Snap, Upload and Paste are on that screen) */}
+            <button className="plus-fab" onClick={tryAdd} aria-label="Add a phrase"
+              style={{width:58,height:58,borderRadius:"50%",background:T.pink,border:outline(2.5),color:"#fff",fontSize:30,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:drop(3,4),flexShrink:0,fontWeight:400}}>
               +
             </button>
 
-            {/* Practice All */}
-            <button className="cth" onClick={()=>startPractice("all")}
-              style={{flex:1,background:T.surface,border:outline(),borderRadius:18,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"14px 8px",display:"flex",alignItems:"center",justifyContent:"center",gap:5,boxShadow:drop(3,3)}}>
-              <span>🃏</span>
-              <span>Practice</span>
-            </button>
+            {/* Practice All — only alongside Review */}
+            {dueCount>0&&(
+              <button className="cth" onClick={()=>startPractice("all")}
+                style={{flex:1,background:T.surface,border:outline(),borderRadius:18,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,padding:"14px 8px",display:"flex",alignItems:"center",justifyContent:"center",gap:5,boxShadow:drop(3,3)}}>
+                <span>🃏</span>
+                <span>Practice</span>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1788,8 +2242,8 @@ function BiliG() {
             style={{background:T.surface,border:outline(2.5),borderRadius:24,padding:"28px 26px",width:"100%",maxWidth:360,boxShadow:drop(6,6),display:"flex",flexDirection:"column",gap:14}}>
             <div>
               <div style={{fontSize:9,letterSpacing:4,color:T.lav,fontFamily:"'Syne',sans-serif",textTransform:"uppercase",marginBottom:5}}>Admin</div>
-              <div style={{fontSize:21,fontWeight:800,fontFamily:"'Syne',sans-serif",color:INK,letterSpacing:"-.6px"}}>Log in to add phrases</div>
-              <div style={{fontSize:12,color:T.muted,fontFamily:"'DM Sans',sans-serif",marginTop:6,lineHeight:1.5}}>Only the owner can add or change phrases. Everyone else can browse and practise.</div>
+              <div style={{fontSize:21,fontWeight:800,fontFamily:"'Syne',sans-serif",color:INK,letterSpacing:"-.6px"}}>{loginFor==="settings"?"Log in to open settings":"Log in to add phrases"}</div>
+              <div style={{fontSize:12,color:T.muted,fontFamily:"'DM Sans',sans-serif",marginTop:6,lineHeight:1.5}}>Only the owner can add or change phrases and categories. Everyone else can browse and practise.</div>
             </div>
             <div><label style={lSt}>Email</label><input type="email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="you@example.com" required autoFocus style={iSt}/></div>
             <div><label style={lSt}>Password</label><input type="password" value={authPw} onChange={e=>setAuthPw(e.target.value)} placeholder="••••••••" required style={iSt}/></div>
