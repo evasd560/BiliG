@@ -4,7 +4,8 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
   <title>biliG — Language Diary</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>"/>
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="apple-touch-icon" href="favicon.png"/>
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=Scheherazade+New:wght@400;700&family=Anton&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet"/>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -233,6 +234,11 @@ const deviceRowsToImport = () => {
   return guestRead().filter(r=>r&&String(r.foreign_text||"").trim()&&String(r.native_text||"").trim()&&!starters.has(`${r.foreign_text}|${r.native_text}`));
 };
 const deviceImported = () => { try{ return !!localStorage.getItem(IMPORTED_KEY); }catch{ return false; } };
+
+// Standby: phrases pasted for review that haven't been added or ignored yet. Kept on this device,
+// so the rest of a batch can be finished later.
+const STANDBY_KEY = "bilig_standby";
+const standbyRead = () => { try{ const v=JSON.parse(localStorage.getItem(STANDBY_KEY)); return Array.isArray(v)?v.filter(r=>r&&typeof r.key==="string"):[]; }catch{ return []; } };
 
 // ── Viewport ──────────────────────────────────────────────────────────────────
 const DESKTOP_Q = "(min-width: 760px)";
@@ -833,7 +839,7 @@ function BiliG() {
   const scanSeq = useRef(0);
   const [imgPreview,   setImgPreview]   = useState(null);
   const [bulkText,     setBulkText]     = useState("");   // pasted list
-  const [bulkRows,     setBulkRows]     = useState([]);   // review list once split
+  const [bulkRows,     setBulkRows]     = useState(standbyRead);   // the review list: phrases on standby until they're added or ignored
   const [bulkNote,     setBulkNote]     = useState("");
   const [bulkBusy,     setBulkBusy]     = useState(false);
   const [deviceCount,  setDeviceCount]  = useState(0);     // phrases saved only on this device, waiting to be moved
@@ -854,6 +860,8 @@ function BiliG() {
   const [catDel,       setCatDel]       = useState(null);        // category waiting on a delete confirmation
   const [catBusy,      setCatBusy]      = useState(false);
   const [loginFor,     setLoginFor]     = useState("add");       // what the admin login popup was opened for
+  const [bulkAdding,   setBulkAdding]   = useState(false);     // showing the paste box even though phrases are already on standby
+  const [ignoreAsk,    setIgnoreAsk]    = useState(null);        // "unticked" | "all": confirming that standby phrases are dropped
   const [bulkExtra,    setBulkExtra]    = useState([]);   // categories added on the review screen that no phrase uses yet
   const [catDraft,     setCatDraft]     = useState(null); // category being renamed / added: {mode:"rename"|"add"|"row", from?, key?, value}
   const [langOpen,     setLangOpen]     = useState(false);
@@ -1131,14 +1139,16 @@ function BiliG() {
   const cancelScan = ()=>{ scanSeq.current++; setScanRows([]); setScanLines([]); setImgPreview(null); setScanError(""); setScanNote(""); setScanBusy(false); setLinesBusy(false); setView("library"); };
 
   // ── Paste many → review → save ──
-  const openBulk = ()=>{ if(readOnly)return; setBulkText(""); setBulkRows([]); setBulkNote(""); setBulkExtra([]); setCatDraft(null); setView("bulk"); };
+  const openBulk = ()=>{ if(readOnly)return; setBulkText(""); setBulkNote(""); setBulkExtra([]); setCatDraft(null); setBulkAdding(false); setView("bulk"); };   // phrases on standby show first; with none, the paste box
   const splitBulk = ()=>{
     const { rows, categories, created } = parseBulk(bulkText, activeLang!=="Arabic"?activeLang:"French", customTopicIds);
     if(!rows.length){ setBulkNote("Nothing to split yet. Paste some phrases first."); return; }
     const info=[];
     if(categories.length) info.push(`Categories picked up from your headings: ${categories.map(id=>`${getTopic(id).icon} ${getTopic(id).label}`).join(", ")}. Each applies to the phrases beneath it.`);
     if(created.length) info.push(`New ${created.length>1?"categories":"category"}: ${created.map(n=>`${topicEmoji(n)} ${n}`).join(", ")}. ${created.length>1?"They're":"It's"} created when you add these phrases.`);
-    setBulkNote(info.join(" ")); setBulkRows(rows);
+    const stamp=Date.now().toString(36);
+    setBulkNote(info.join(" ")); setBulkRows(prev=>[...prev,...rows.map((r,i)=>({...r,key:`pb_${stamp}_${i}`}))]);   // adds to what is already on standby
+    setBulkAdding(false); setBulkText("");
   };
   const patchBulkRow = (key,patch)=>setBulkRows(rows=>rows.map(r=>r.key===key?{...r,...patch}:r));
   // Editing the category list on the review screen. Typed names match a built-in (or an existing
@@ -1248,23 +1258,32 @@ function BiliG() {
   );
   const removeCat = t=>{ setBulkRows(rows=>rows.map(r=>r.topic===t?{...r,topic:"Other"}:r)); setBulkExtra(x=>x.filter(c=>c!==t)); };
   const bulkKept = bulkRows.filter(r=>r.keep&&r.foreign_text.trim()&&r.native_text.trim());
+  const bulkShowPaste = !bulkRows.length||bulkAdding;      // the paste box, or the review list of what is on standby
   const bulkIncomplete = bulkRows.filter(r=>r.keep&&!(r.foreign_text.trim()&&r.native_text.trim())).length;
+  // Adds the ticked, complete phrases in one request (all or none). Everything else stays on standby.
   const saveBulk = async()=>{
     if(!bulkKept.length){ toast$("Nothing to add — each ticked phrase needs its text and translation","error"); return; }
     setBulkBusy(true);
-    for(const r of bulkKept){
-      await dbInsert({
-        foreign_text:r.foreign_text.trim(), native_text:r.native_text.trim(),
-        language:r.language, topic:r.topic, notes:(r.notes||"").trim(),
-        date:todayStr(), srs_reps:0, srs_interval:1, srs_next_review:null,
-        total_reviews:0, good_reviews:0, user_id:session.user?.id,
-      });
+    const body=bulkKept.map(r=>({
+      foreign_text:r.foreign_text.trim(), native_text:r.native_text.trim(), language:r.language, topic:r.topic, notes:(r.notes||"").trim(),
+      date:todayStr(), srs_reps:0, srs_interval:1, srs_next_review:null, total_reviews:0, good_reviews:0, user_id:session.user?.id,
+    }));
+    let ok=false, why="";
+    if(isGuest){ for(const row of body) await dbInsert(row); ok=true; }
+    else{
+      const d=await sbFetch("/phrases",{method:"POST",headers:ah(),body:JSON.stringify(body)}).catch(()=>null);
+      if(Array.isArray(d)&&d.length){ setPhrases(prev=>[...d,...prev]); ok=true; } else why=d?.message||"No response from Supabase.";
     }
-    const n=bulkKept.length;
-    setActiveLang(bulkKept[0].language); setTopicFilter("All"); setStackIdx(0);
-    setBulkText(""); setBulkRows([]); setBulkNote(""); setBulkExtra([]); setCatDraft(null); setBulkBusy(false); setView("library");
-    toast$(`${n} phrase${n>1?"s":""} added ✓`);
+    setBulkBusy(false);
+    if(!ok){ toast$(`Couldn't add them — nothing was changed. ${why}`,"error"); return; }
+    const done=new Set(bulkKept.map(r=>r.key)), n=bulkKept.length, left=bulkRows.length-n;
+    setBulkRows(rows=>rows.filter(r=>!done.has(r.key)));
+    setActiveLang(bulkKept[0].language); setTopicFilter("All"); setStackIdx(0); setCatDraft(null); setBulkExtra([]);
+    if(left<=0){ setBulkText(""); setBulkNote(""); setView("library"); toast$(`${n} phrase${n>1?"s":""} added ✓`); }
+    else toast$(`${n} phrase${n>1?"s":""} added ✓ · ${left} still on standby`);
   };
+  useEffect(()=>{ if(!readOnly){ try{ localStorage.setItem(STANDBY_KEY,JSON.stringify(bulkRows)); }catch{} } },[bulkRows,readOnly]);   // standby is kept on this device
+  const ignoreStandby = which=>{ setBulkRows(rows=>which==="all"?[]:rows.filter(r=>r.keep)); setIgnoreAsk(null); if(which==="all"&&view==="bulk") setView("library"); };
 
   // ── Edit many: change fields on lots of saved phrases, or tick some to recategorise / delete them ──
   const MANAGE_FIELDS = ["foreign_text","native_text","notes","language","topic"];
@@ -1391,9 +1410,7 @@ function BiliG() {
     <div style={{minHeight:"100vh",background:T.bg,backgroundImage:GRID,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
       <style>{css}</style>
       <div style={{textAlign:"center",marginBottom:36}}>
-        <div style={{fontFamily:"'Syne',sans-serif",fontSize:46,fontWeight:800,letterSpacing:"-2px",color:T.ink,lineHeight:1}}>
-          bili<span style={{color:T.lav}}>G</span><span style={{width:9,height:9,borderRadius:"50%",background:T.pink,display:"inline-block",marginLeft:2,marginBottom:3,verticalAlign:"bottom"}}/>
-        </div>
+        <img src="logo.png" alt="BiliG" style={{height:76,width:"auto",display:"block",margin:"0 auto"}}/>
         <div style={{fontSize:10,letterSpacing:4,color:T.muted,fontFamily:"'Syne',sans-serif",textTransform:"uppercase",marginTop:8}}>Language Diary</div>
       </div>
       <div style={{background:T.surface,border:outline(2.5),borderRadius:24,padding:"32px 28px",width:"100%",maxWidth:380,boxShadow:drop(6,6)}}>
@@ -1442,6 +1459,17 @@ function BiliG() {
 
       {toast&&<div style={{position:"fixed",top:18,left:"50%",transform:"translateX(-50%)",background:toast.type==="error"?"#fee2e2":toast.type==="info"?"#ede9ff":"#f0fdf4",color:toast.type==="error"?"#991b1b":toast.type==="info"?T.lav:"#166534",padding:"9px 20px",borderRadius:30,zIndex:999,fontSize:13,fontFamily:"'DM Sans',sans-serif",boxShadow:"0 4px 24px rgba(0,0,0,.1)",animation:"fadeDown .25s ease",whiteSpace:"nowrap",border:`1px solid ${toast.type==="error"?"#fca5a5":toast.type==="info"?T.lavBorder:"#86efac"}`}}>{toast.msg}</div>}
 
+      {/* ── Reminder: phrases waiting on standby ── */}
+      {!readOnly&&view==="library"&&bulkRows.length>0&&(<>
+        <div style={{height:isDesktop?46:44}}/>
+        <div role="status" style={{position:"fixed",top:0,left:0,right:0,height:isDesktop?46:44,zIndex:120,background:T.lavLight,borderBottom:outline(2),display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"0 12px",fontFamily:"'DM Sans',sans-serif",fontSize:12.5,color:INK}}>
+          <span style={{flexShrink:0}}>🗂</span>
+          <span style={{fontWeight:600,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{bulkRows.length} phrase{bulkRows.length===1?"":"s"} on standby</span>
+          <button onClick={openBulk} style={{flexShrink:0,background:INK,color:"#fff",border:"none",borderRadius:9,padding:"4px 11px",fontSize:12,fontWeight:600,fontFamily:"'DM Sans',sans-serif",cursor:"pointer"}}>Finish them</button>
+          <button onClick={()=>setIgnoreAsk("all")} style={{flexShrink:0,background:"transparent",color:INK,border:`1px solid ${T.borderMid}`,borderRadius:9,padding:"4px 11px",fontSize:12,fontWeight:600,fontFamily:"'DM Sans',sans-serif",cursor:"pointer"}}>Ignore all</button>
+        </div>
+      </>)}
+
       {/* ── HEADER ── */}
       <div style={{...shell,position:"relative",zIndex:10,padding:isDesktop?"26px 40px 0":"18px 22px 0",display:"grid",gridTemplateColumns:isDesktop?"1fr auto 1fr":"1fr auto",alignItems:"center",gap:16}}>
         {isDesktop?(<>
@@ -1449,14 +1477,10 @@ function BiliG() {
           <div style={{fontSize:13,color:T.muted,fontFamily:"'DM Sans',sans-serif",letterSpacing:"-0.2px"}}>
             {greeting}{firstName&&<>, <span style={{color:T.inkMid,fontWeight:500}}>{firstName}</span></>} 👋
           </div>
-          <div style={{fontFamily:"'Syne',sans-serif",fontSize:44,fontWeight:800,letterSpacing:"-2px",color:T.ink,lineHeight:1,display:"flex",alignItems:"baseline",gap:1}}>
-            bili<span style={{color:T.lav}}>G</span><span style={{width:9,height:9,borderRadius:"50%",background:T.pink,display:"inline-block",marginLeft:3,marginBottom:2,verticalAlign:"bottom"}}/>
-          </div>
+          <img src="logo.png" alt="BiliG" style={{height:56,width:"auto",display:"block"}}/>
         </>):(
           <div>
-            <div style={{fontFamily:"'Syne',sans-serif",fontSize:26,fontWeight:800,letterSpacing:"-1.5px",color:T.ink,lineHeight:1,display:"flex",alignItems:"baseline",gap:1}}>
-              bili<span style={{color:T.lav}}>G</span><span style={{width:6,height:6,borderRadius:"50%",background:T.pink,display:"inline-block",marginLeft:2,marginBottom:1,verticalAlign:"bottom"}}/>
-            </div>
+            <img src="logo.png" alt="BiliG" style={{height:32,width:"auto",display:"block"}}/>
             <div style={{fontSize:11,color:T.muted,fontFamily:"'DM Sans',sans-serif",marginTop:3,letterSpacing:"-0.2px"}}>
               {greeting}{firstName&&<>, <span style={{color:T.inkMid,fontWeight:500}}>{firstName}</span></>} 👋
             </div>
@@ -1866,13 +1890,13 @@ function BiliG() {
 
       {/* ══ PASTE MANY ══ */}
       {view==="bulk"&&(
-        <div style={{padding:isDesktop?`36px 40px ${bulkRows.length?140:60}px`:`20px 22px ${bulkRows.length?130:40}px`,animation:"up .3s ease",maxWidth:isDesktop?720:560,marginLeft:isDesktop?"auto":0,marginRight:isDesktop?"auto":0,position:"relative",zIndex:1}}>
-          <div style={{fontSize:9,letterSpacing:4,color:T.lav,fontFamily:"'Syne',sans-serif",textTransform:"uppercase",marginBottom:5}}>Paste many</div>
+        <div style={{padding:isDesktop?`36px 40px ${bulkShowPaste?60:140}px`:`20px 22px ${bulkShowPaste?40:130}px`,animation:"up .3s ease",maxWidth:isDesktop?720:560,marginLeft:isDesktop?"auto":0,marginRight:isDesktop?"auto":0,position:"relative",zIndex:1}}>
+          <div style={{fontSize:9,letterSpacing:4,color:T.lav,fontFamily:"'Syne',sans-serif",textTransform:"uppercase",marginBottom:5}}>{bulkShowPaste?"Paste many":"Standby & review"}</div>
           <div style={{fontSize:isDesktop?26:22,fontWeight:800,fontFamily:"'Syne',sans-serif",marginBottom:18,color:INK,letterSpacing:"-.8px"}}>
-            {bulkRows.length?`Review ${bulkRows.length} phrase${bulkRows.length>1?"s":""}`:"Paste your list"}
+            {bulkShowPaste?"Paste your list":`${bulkRows.length} phrase${bulkRows.length>1?"s":""} to review`}
           </div>
 
-          {!bulkRows.length?(<>
+          {bulkShowPaste?(<>
             <div style={{fontSize:12,color:T.muted,fontFamily:SERIF,fontStyle:"italic",lineHeight:1.55,marginBottom:12}}>
               One line is one phrase: the transliteration, the English, then the Arabic ("marhaban - Hello - مرحبا"), split by " - ", " / ", "--", a tab, "|" or brackets. Arabic first works too. A line like "Food:" or "# Travel" sets the category for the phrases below it. Nothing is saved until you've reviewed it.
             </div>
@@ -1883,13 +1907,13 @@ function BiliG() {
             <div style={{display:"flex",gap:10,marginTop:16,flexWrap:"wrap"}}>
               <button onClick={splitBulk} disabled={!bulkText.trim()}
                 style={{flex:1,minWidth:180,background:INK,border:outline(),borderRadius:14,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:14,padding:"14px",cursor:"pointer",boxShadow:drop(4,4),opacity:bulkText.trim()?1:.5}}>Split into phrases</button>
-              <button onClick={()=>setView("form")}
-                style={{background:"transparent",border:`1px solid ${T.borderMid}`,borderRadius:14,color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:14,padding:"14px 18px",cursor:"pointer"}}>Back</button>
+              <button onClick={()=>bulkRows.length?setBulkAdding(false):setView("form")}
+                style={{background:"transparent",border:`1px solid ${T.borderMid}`,borderRadius:14,color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:14,padding:"14px 18px",cursor:"pointer"}}>{bulkRows.length?`Back to the ${bulkRows.length} on standby`:"Back"}</button>
             </div>
           </>):(<>
             <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:16}}>
               <div style={{flex:1,minWidth:150,fontSize:12,color:T.muted,fontFamily:SERIF,fontStyle:"italic",lineHeight:1.5}}>
-                Untick anything you don't want and fix any wrong split. If the translation and transliteration came out the wrong way round, use ⇄. Each phrase has its own category.
+                Tick the ones you approve and press Add. The rest stay on standby, kept on this device, until you add or ignore them. Fix any wrong split. If the translation and transliteration came out the wrong way round, use ⇄. Each phrase has its own category.
                 {bulkIncomplete>0&&<><br/><span style={{color:"#b45309",fontStyle:"normal",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>{bulkIncomplete} still need{bulkIncomplete===1?"s":""} a phrase or translation.</span></>}
               </div>
               <button type="button" onClick={()=>setBulkRows(rows=>rows.map(r=>({...r,native_text:r.notes,notes:r.native_text})))} title="Swap translation and transliteration on every phrase"
@@ -1944,6 +1968,8 @@ function BiliG() {
                 style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:10,padding:"6px 12px",fontSize:12,fontFamily:"'DM Sans',sans-serif",fontWeight:600,color:INK,cursor:"pointer",opacity:bulkRows.every(r=>r.keep)?.45:1}}>Select all</button>
               <button type="button" onClick={()=>setBulkRows(rows=>rows.map(r=>({...r,keep:false})))} disabled={!bulkRows.some(r=>r.keep)}
                 style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:10,padding:"6px 12px",fontSize:12,fontFamily:"'DM Sans',sans-serif",fontWeight:600,color:INK,cursor:"pointer",opacity:bulkRows.some(r=>r.keep)?1:.45}}>Deselect all</button>
+              <button type="button" onClick={()=>setIgnoreAsk("unticked")} disabled={!bulkRows.some(r=>!r.keep)}
+                style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:10,padding:"6px 12px",fontSize:12,fontFamily:"'DM Sans',sans-serif",fontWeight:600,color:"#b45309",cursor:"pointer",opacity:bulkRows.some(r=>!r.keep)?1:.45}}>Ignore unticked</button>
             </div>
 
             {bulkRows.map(r=>{
@@ -1960,6 +1986,8 @@ function BiliG() {
                     ):(
                       <div dir={rl.rtl?"rtl":"ltr"} style={{flex:1,minWidth:0,fontFamily:rl.font,fontSize:rl.rtl?20:15,fontWeight:700,color:INK,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:rl.rtl?"right":"left"}}>{r.foreign_text||r.native_text||"—"}</div>
                     )}
+                    <button type="button" onClick={()=>setBulkRows(rows=>rows.filter(x=>x.key!==r.key))} aria-label="Ignore this phrase" title="Ignore: remove it from standby"
+                      style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:14,padding:"0 2px",flexShrink:0,lineHeight:1}}>✕</button>
                   </div>
                   {r.keep&&(
                     <div style={{display:"flex",flexDirection:"column",gap:8,paddingLeft:27}}>
@@ -1999,17 +2027,17 @@ function BiliG() {
       )}
 
       {/* Paste many — actions stay in view while you scroll the list */}
-      {view==="bulk"&&bulkRows.length>0&&(
+      {view==="bulk"&&!bulkShowPaste&&(
         <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:50,padding:isDesktop?"22px 40px 26px":"20px 22px 24px",background:`linear-gradient(to top,${T.bg} 72%,transparent 100%)`}}>
           <div style={{maxWidth:isDesktop?640:516,margin:isDesktop?"0 auto":0,display:"flex",gap:10}}>
             <button onClick={saveBulk} disabled={bulkBusy||!bulkKept.length}
               style={{flex:1,background:INK,border:outline(),borderRadius:14,color:"#fff",fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:14,padding:"14px",cursor:"pointer",boxShadow:drop(4,4),opacity:bulkBusy||!bulkKept.length?.5:1}}>
               {bulkBusy?"Adding…":`Add ${bulkKept.length} phrase${bulkKept.length===1?"":"s"}`}
             </button>
-            <button onClick={()=>{ setBulkRows([]); setBulkNote(""); setCatDraft(null); }} disabled={bulkBusy}
-              style={{background:T.surface,border:outline(),borderRadius:14,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:14,padding:"14px 16px",cursor:"pointer",boxShadow:drop(3,3)}}>Edit text</button>
-            <button onClick={()=>setView("library")} disabled={bulkBusy}
-              style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:14,color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:14,padding:"14px 16px",cursor:"pointer"}}>Cancel</button>
+            <button onClick={()=>{ setBulkAdding(true); setBulkText(""); setCatDraft(null); }} disabled={bulkBusy}
+              style={{background:T.surface,border:outline(),borderRadius:14,color:INK,fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:14,padding:"14px 16px",cursor:"pointer",boxShadow:drop(3,3)}}>＋ Paste more</button>
+            <button onClick={()=>setView("library")} disabled={bulkBusy} title="Leave the rest on standby and finish later"
+              style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:14,color:T.muted,fontFamily:"'DM Sans',sans-serif",fontSize:14,padding:"14px 16px",cursor:"pointer"}}>Later</button>
           </div>
         </div>
       )}
@@ -2257,6 +2285,23 @@ function BiliG() {
           </form>
         </div>
       )}
+
+      {/* Ignoring standby phrases asks first */}
+      {ignoreAsk&&(()=>{
+        const n=ignoreAsk==="all"?bulkRows.length:bulkRows.filter(r=>!r.keep).length;
+        return (
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.35)",zIndex:130,display:"flex",alignItems:"center",justifyContent:"center",padding:24}} onClick={()=>setIgnoreAsk(null)}>
+            <div onClick={e=>e.stopPropagation()} style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:20,padding:24,maxWidth:310,width:"100%",animation:"pop .2s ease",boxShadow:"0 20px 60px rgba(0,0,0,.15)"}}>
+              <div style={{fontSize:17,fontWeight:800,fontFamily:"'Syne',sans-serif",marginBottom:6,color:T.ink}}>Ignore {n} phrase{n===1?"":"s"}?</div>
+              <div style={{fontSize:12,color:T.muted,fontFamily:"'DM Sans',sans-serif",marginBottom:20,lineHeight:1.5}}>{ignoreAsk==="all"?"Everything on standby":"The unticked ones"} will be dropped and never added to the library. You can't get them back.</div>
+              <div style={{display:"flex",gap:9}}>
+                <button onClick={()=>ignoreStandby(ignoreAsk)} style={{flex:1,background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:12,color:"#dc2626",padding:"11px",cursor:"pointer",fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13}}>Ignore</button>
+                <button onClick={()=>setIgnoreAsk(null)} style={{flex:1,background:T.surfaceHi,border:`1px solid ${T.border}`,borderRadius:12,color:T.muted,padding:"11px",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontSize:13}}>Keep them</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Delete modal */}
       {delConfirm&&(
