@@ -101,6 +101,7 @@ const BODY    = BODY;                      // everything else
 const DISPLAY = HEAD;
 // Main call-to-action buttons (Review word, Review, Practice, Add phrase): a thick ink border and a hard shadow down and to the right
 const CTA   = { border:`3px solid ${INK}`, boxShadow:`5px 5px 0 ${INK}`, borderRadius:18 };
+const CTA_PINK = "#f7a8c6", CTA_NAVY = "#2f3e74";      // Review (and Practice, in its place) is the soft pink; Add phrase is a muted navy
 const CTA_S = { border:`3px solid ${INK}`, boxShadow:`4px 4px 0 ${INK}`, borderRadius:16 };     // the same, a size down for phones
 const SERIF   = "'Instrument Serif',Georgia,serif";
 
@@ -198,6 +199,79 @@ const kindOf = p => {
   if(/[.!?؟…]$/.test(f)||/[.!?؟…]$/.test(n)) return "Phrase";
   return longestPart(f)>=3||longestPart(n)>=4?"Phrase":"Word";     // "شكرا جزيلا" = "Thank you so much" is a phrase; "صاحب العمل" = "Employer" is a word
 };
+
+
+// For searching: lower case, no accents or Arabic vowel marks, "al-khayr" = "al khayr", the alef variants together.
+const fold = t => String(t||"").normalize("NFD").replace(/\p{M}/gu,"").replace(/ـ/g,"").replace(/[أإآٱ]/g,"ا").toLowerCase().replace(/[\-'’`ʿʾ]/g," ").replace(/\s+/g," ").trim();
+
+// ── A picture for a word: an emoji chosen from its English meaning, shown as an OpenMoji illustration ──
+// Hand-picked pairs first (so "mother" isn't a breast-feeding icon and "money" isn't a gem); the big emoji dataset only as a
+// fallback, and only for an exact name or keyword. Anything else has no picture, and the card keeps its category sticker.
+const EMOJI_WORDS = {
+  "👩‍👧":"mother,mom,mum","👨‍👦":"father,dad","👦":"brother,boy,son","👧":"sister,girl,daughter","👶":"baby","🧒":"child,kid","👨":"man","👩":"woman,lady",
+  "👵":"grandmother,grandma","👴":"grandfather,grandpa","👪":"family,parent","🧑‍🤝‍🧑":"friend,friendship","🤵":"husband,groom","👰":"wife,bride",
+  "🧑‍🏫":"teacher","🧑‍🎓":"student","🧑‍⚕️":"doctor,nurse","🦷":"dentist,tooth","🧑‍✈️":"pilot","🧑‍🚀":"astronaut","🧑‍🎤":"singer","🎭":"actor,actress,theatre,drama",
+  "🧑‍🎨":"artist,painter","🧑‍🍳":"chef,cook","🧑‍🌾":"farmer,gardener","👮":"police,policeman","🧑‍🚒":"firefighter","🧑‍⚖️":"judge,lawyer","🧑‍🔧":"mechanic",
+  "🧑‍🔬":"scientist","⚙️":"engineer,engine","📐":"architect","🧮":"accountant,accounting","📚":"librarian,library,encyclopedia,book collection","✍️":"writer,author",
+  "🧑‍💼":"employee,employer,manager,boss,business person,businessman,businesswoman","👷":"worker,builder,construction",
+  "🏥":"hospital,clinic","🏫":"school","🏢":"office,company,firm,building","🏦":"bank","🏠":"house,home","🏨":"hotel","✈️":"airplane,plane,airport,flight,travel","🚉":"station",
+  "🍽️":"restaurant,meal,dinner,food","🏪":"shop,store","🛒":"market,shopping,supermarket","🕌":"mosque","⛪":"church","🏙️":"city,town","🛣️":"road,street,highway",
+  "🚗":"car,driver,taxi","🚌":"bus","🚆":"train","🚢":"ship,boat","🚲":"bicycle,bike","🌉":"bridge","⛰️":"mountain","🌊":"sea,ocean,wave","🏖️":"beach,holiday,vacation",
+  "🏞️":"river,park,nature","🌳":"tree","🌸":"flower","☀️":"sun,sunny","🌙":"moon,night","⭐":"star","🌧️":"rain,rainy","❄️":"snow","💨":"wind","🔥":"fire","💧":"water,drop",
+  "🌍":"earth,world,globe","🔑":"key","📱":"phone,mobile phone,mobile,cell phone","💻":"computer,laptop","📖":"book,novel,dictionary","📰":"newspaper,magazine,news",
+  "🗺️":"atlas,map","✏️":"pen,pencil","✉️":"letter,mail,envelope","👜":"bag,handbag","👛":"purse,wallet","👓":"glasses,eye glasses,eyeglasses","🕶️":"sunglasses",
+  "⏰":"clock,alarm","⌚":"watch","🎫":"ticket","💰":"money,cash,rich","🪙":"coin","🎁":"gift,present","📷":"camera,photo,photograph","📺":"television,tv","📻":"radio",
+  "💡":"idea,lamp,light bulb","🚪":"door","🛏️":"bed","🪑":"chair","☂️":"umbrella","👕":"shirt","👟":"shoe,sneaker","🧢":"cap,hat","👗":"dress","💍":"ring,engagement",
+  "🍞":"bread","☕":"coffee","🍵":"tea","🥛":"milk","🍚":"rice","🥩":"meat,beef","🍗":"chicken","🐟":"fish","🥚":"egg","🧀":"cheese","🍎":"apple,fruit","🍌":"banana",
+  "🍊":"orange","🥦":"vegetable","🍅":"tomato","🥔":"potato","🍬":"sugar,sweet,candy","🧂":"salt","🍲":"soup,stew","🎂":"cake,birthday","🍦":"ice cream","🍕":"pizza","🍳":"breakfast,cooking",
+  "🐱":"cat","🐶":"dog","🐴":"horse","🐪":"camel","🐦":"bird","🦁":"lion","🐘":"elephant","🐄":"cow","🐑":"sheep",
+  "❤️":"love,heart","😊":"happy,happiness,smile","😢":"sad,cry","😠":"angry,anger","😴":"tired,sleep,sleepy","🥶":"cold,freezing","🎉":"party,celebration,celebrate",
+  "💃":"dance,dancing,dancer","🎵":"music,song","🎈":"fun,balloon","💼":"work,business,job,briefcase","🤝":"meeting,partnership,agreement,deal,handshake","🎙️":"interview,microphone",
+  "📈":"investment,invest,profit,growth","📣":"marketing,promotion","📢":"advertisement,advert,ad,announcement","🏷️":"brand,label,price tag","🆓":"free",
+  "🌞":"day,daytime","🌅":"morning,good morning,sunrise","🌇":"evening,sunset","📅":"week,calendar,date,month","💒":"wedding","⚽":"sport,football,soccer","🎮":"game,play",
+  "🎬":"movie,film,cinema","💊":"health,medicine,pill","🤒":"sick,ill,illness","🎓":"graduation,university,degree","🧭":"direction,compass","🛌":"rest","🙏":"please,thank,prayer,thanks"
+};
+const STOPWORDS = new Set(["the","a","an","to","of","and","or","my","your","his","her"]);
+const cleanWord = s => String(s||"").toLowerCase().replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim();
+const stemWord = w => w.length>4&&w.endsWith("ies")?w.slice(0,-3)+"y":w.length>4&&w.endsWith("es")?w.slice(0,-2):w.length>3&&w.endsWith("s")?w.slice(0,-1):w;
+const keyOf = t => cleanWord(t).split(" ").filter(w=>w&&!STOPWORDS.has(w)).map(stemWord).join(" ");
+const WORD_INDEX = (()=>{ const m=new Map(); for(const [emoji,list] of Object.entries(EMOJI_WORDS)) for(const w of list.split(",")){ const k=keyOf(w); if(k&&!m.has(k)) m.set(k,emoji); } return m; })();
+const meaningAlternatives = m => String(m||"").split(/\s*[·\/|,;]\s*/).filter(x=>x.trim());          // "Singer · Singers", "dance/dancing"
+const curatedEmoji = meaning => { for(const a of meaningAlternatives(meaning)){ const e=WORD_INDEX.get(keyOf(a)); if(e) return e; } return null; };
+// The fallback: an exact emoji name or keyword from the emoji dataset ("gardener" is a keyword of the farmer emoji).
+const datasetEmoji = (meaning,db) => {
+  const GROUPS=new Set([0,1,3,4,5,6,7]);        // faces, people, animals, food, places, activities, objects (no flags or symbols)
+  for(const a of meaningAlternatives(meaning)){
+    const k=keyOf(a); if(!k) continue;
+    const hit=db.find(e=>GROUPS.has(e.group)&&e.unicode&&(keyOf(e.label)===k||(e.tags||[]).some(t=>keyOf(t)===k)));
+    if(hit) return hit.unicode;
+  }
+  return null;
+};
+const hexOf = e => [...e].map(c=>c.codePointAt(0).toString(16).toUpperCase().padStart(4,"0")).join("-");
+
+// Where the pictures come from: OpenMoji (CC BY-SA 4.0, openmoji.org), loaded from a CDN; the emoji dataset is fetched only if the list has no answer.
+const OPENMOJI = "https://cdn.jsdelivr.net/npm/openmoji@16.0.0/color/svg/";
+const EMOJIBASE = "https://cdn.jsdelivr.net/npm/emojibase-data@16.0.3/en/compact.json";
+let _emojiDb = null;
+const emojiDb = () => _emojiDb||(_emojiDb=fetch(EMOJIBASE).then(r=>r.json()).catch(()=>[]));
+const WEMOJI_KEY = "bilig_word_emoji";
+const wemojiCache = () => { try{ return JSON.parse(localStorage.getItem(WEMOJI_KEY))||{}; }catch{ return {}; } };
+// The emoji for a phrase's meaning, or null. The answer is remembered on this device, so the dataset is rarely fetched.
+async function findWordEmoji(p){
+  const key=`${p.id}|${p.native_text}`, cache=wemojiCache();
+  if(key in cache) return cache[key]||null;
+  const listed=curatedEmoji(p.native_text), db=listed?[]:await emojiDb(), found=listed||(db.length?datasetEmoji(p.native_text,db):null)||null;
+  if(found||db.length||listed){ try{ localStorage.setItem(WEMOJI_KEY,JSON.stringify({...wemojiCache(),[key]:found||""})); }catch{} }
+  return found;
+}
+// An OpenMoji picture. A few files are named without the invisible variation selector, so it tries both names before giving up.
+function WordArt({ emoji, onFail, style }) {
+  const hex=hexOf(emoji), names=[...new Set([hex,hex.replace(/-FE0F$/,"")])];
+  const [i,setI]=useState(0);
+  useEffect(()=>setI(0),[emoji]);
+  return <img src={OPENMOJI+names[i]+".svg"} alt="" aria-hidden="true" onError={()=>i+1<names.length?setI(i+1):onFail()} style={style}/>;
+}
 
 // ── Time greeting ─────────────────────────────────────────────────────────────
 function getGreeting() {
@@ -339,12 +413,12 @@ const ARTXT = "font-family=\"'Scheherazade New',serif\" font-weight=\"700\" fill
 const SPARK = (x,y,s=1) => `<path d="M${x} ${y-9*s} L${x+3*s} ${y-3*s} L${x+9*s} ${y} L${x+3*s} ${y+3*s} L${x} ${y+9*s} L${x-3*s} ${y+3*s} L${x-9*s} ${y} L${x-3*s} ${y-3*s} Z" fill="#fff" ${SK} stroke-width="3.2"/>`;
 const TOPIC_SVGS = {
   Greetings: () => `
-    <g transform="rotate(-7 100 96)">
-      <path d="M34 50 Q34 28 56 28 L146 28 Q168 28 168 50 L168 112 Q168 134 146 134 L104 134 L70 168 L74 134 L56 134 Q34 134 34 112 Z" fill="#a8d0f5" ${SK}/>
-      <text x="101" y="72" font-size="36" ${ARTXT}>السلام</text>
-      <text x="101" y="115" font-size="36" ${ARTXT}>عليكم</text>
-    </g>
-    <path d="M22 34 L34 44 M14 68 L30 66 M56 12 L58 26" fill="none" ${SK}/>`,
+    <g ${SK} stroke-width="4.5" fill="none">${[0,45,90,135,180,225,270,315].map(a=>`<path d="M72 30 v-14" transform="rotate(${a} 72 78)"/>`).join("")}</g>
+    <circle cx="72" cy="78" r="34" fill="#ffd45e" ${SK}/>
+    <path d="M50 66 Q56 52 70 50" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" opacity=".85"/>
+    <path d="M150 104 A38 38 0 1 0 172 168 A30 30 0 0 1 150 104 Z" fill="#cbbaf4" ${SK}/>
+    <circle cx="128" cy="140" r="4.5" fill="#ab97e8"/><circle cx="140" cy="160" r="3" fill="#ab97e8"/>
+    ${SPARK(172,60,1.1)}${SPARK(40,152,.9)}`,
   Politeness: () => `
     <path d="M100 172 C36 128 18 88 44 58 C66 34 94 44 100 66 C106 44 134 34 156 58 C182 88 164 128 100 172 Z" fill="#f48fb1" ${SK}/>
     <path d="M52 70 Q58 58 74 60" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" opacity=".9"/>
@@ -411,6 +485,34 @@ const CITY_SVG = `
   <path d="M170 282 Q160 226 176 170" fill="none" stroke="#8a5a34" stroke-width="9" stroke-linecap="round"/>
   <path d="M176 170 Q146 146 118 168 Q150 154 176 170 Z M176 170 Q150 176 130 204 Q160 180 176 170 Z M176 170 Q206 150 200 124 Q194 154 176 170 Z M176 170 Q174 132 150 116 Q168 144 176 170 Z M176 170 Q206 172 200 202 Q192 178 176 170 Z" fill="#2f7d3f"/>
   <rect y="252" width="200" height="30" fill="#e6c99d"/>`;
+
+// A garden for words about gardening: flat, like the street scene (200x280).
+const gardenFlower = (x,y,h,petal,mid="#ffd45e") => `<path d="M${x} ${y} q-2 ${h/2} 1 ${h}" fill="none" stroke="#2f7d3f" stroke-width="2.2" stroke-linecap="round"/><path d="M${x} ${y+h*.55} q-9 -3 -11 -10 q9 0 11 10 Z M${x} ${y+h*.7} q9 -3 11 -10 q-9 0 -11 10 Z" fill="#3f9a55"/>${[0,72,144,216,288].map(a=>`<ellipse cx="${x}" cy="${y-5.5}" rx="3.6" ry="5.6" fill="${petal}" transform="rotate(${a} ${x} ${y})"/>`).join("")}<circle cx="${x}" cy="${y}" r="3.4" fill="${mid}"/>`;
+const gardenSprout = (x,y,c="#4caf5c") => `<path d="M${x} ${y} q-14 -4 -16 -18 q14 2 16 18 Z M${x} ${y} q14 -4 16 -18 q-14 2 -16 18 Z M${x} ${y} q-3 -12 0 -24 q3 12 0 24 Z" fill="${c}"/>`;
+const GARDEN_SVG = `
+  <defs><linearGradient id="gsky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#84c4f7"/><stop offset="1" stop-color="#e6f5ff"/></linearGradient></defs>
+  <rect width="200" height="280" fill="url(#gsky)"/>
+  <circle cx="158" cy="52" r="30" fill="#fff3b8" opacity=".55"/><circle cx="158" cy="52" r="19" fill="#ffd45e"/>
+  <g fill="#fff"><ellipse cx="46" cy="44" rx="24" ry="8"/><ellipse cx="62" cy="38" rx="15" ry="8"/><ellipse cx="128" cy="90" rx="20" ry="6"/><ellipse cx="140" cy="85" rx="12" ry="6"/></g>
+  <path d="M0 132 Q40 100 84 124 Q130 96 200 128 V190 H0 Z" fill="#b6dcaa"/>
+  <path d="M0 152 Q56 126 110 148 Q158 130 200 150 V200 H0 Z" fill="#8ecb86"/>
+  <rect x="150" y="118" width="4" height="34" fill="#8a5a34"/><circle cx="152" cy="112" r="17" fill="#3f9a55"/><circle cx="141" cy="120" r="11" fill="#4caf5c"/><circle cx="164" cy="121" r="10" fill="#4caf5c"/><circle cx="147" cy="109" r="3" fill="#e5484d"/><circle cx="160" cy="116" r="3" fill="#e5484d"/><circle cx="153" cy="124" r="3" fill="#e5484d"/>
+  <rect x="0" y="176" width="200" height="104" fill="#7cc46c"/>
+  <g fill="#fff" stroke="#e4dccb" stroke-width="1">${Array.from({length:11},(_,i)=>`<path d="M${i*19-2} 188 v-30 l6 -6 l6 6 v30 Z"/>`).join("")}</g>
+  <rect x="0" y="166" width="200" height="4" fill="#fff"/><rect x="0" y="178" width="200" height="4" fill="#fff"/>
+  <rect x="0" y="188" width="200" height="92" fill="#6cb85e"/>
+  <path d="M0 214 Q100 202 200 214 V250 Q100 262 0 250 Z" fill="#9a6a42"/>
+  <path d="M0 214 Q100 202 200 214" fill="none" stroke="#b98657" stroke-width="3"/>
+  <path d="M8 228 Q100 218 192 228 M8 240 Q100 232 192 240" fill="none" stroke="#83552f" stroke-width="2"/>
+  ${gardenSprout(28,232)}${gardenSprout(66,229,"#57b566")}${gardenSprout(104,230)}${gardenSprout(142,229,"#57b566")}${gardenSprout(176,232)}
+  ${gardenFlower(22,254,22,"#f7a8c6")}${gardenFlower(52,258,18,"#ffd45e","#f0883a")}${gardenFlower(84,254,24,"#b9a7f0")}${gardenFlower(116,258,18,"#fff","#ffd45e")}${gardenFlower(148,254,22,"#f7a8c6")}${gardenFlower(178,258,18,"#ff9d5c")}
+  <g transform="translate(104 148) rotate(24)"><path d="M0 0 h26 l-3 22 h-20 Z" fill="#5aa6ef" stroke="#2258b8" stroke-width="2" stroke-linejoin="round"/><path d="M26 6 l20 -8 l-2 6 l-16 10 Z" fill="#5aa6ef" stroke="#2258b8" stroke-width="2" stroke-linejoin="round"/><path d="M0 4 q-10 -4 -10 8" fill="none" stroke="#2258b8" stroke-width="2.5" stroke-linecap="round"/><path d="M4 -2 q10 -12 22 -2" fill="none" stroke="#2258b8" stroke-width="2.5" stroke-linecap="round"/></g>
+  <g fill="#8fd0ff"><path d="M150 176 q-2 5 0 8 q3 -3 0 -8 Z"/><path d="M155 190 q-2 5 0 8 q3 -3 0 -8 Z"/><path d="M147 194 q-2 5 0 8 q3 -3 0 -8 Z"/><path d="M158 204 q-2 5 0 8 q3 -3 0 -8 Z"/></g>
+  <g transform="translate(58 158)"><path d="M0 0 q-10 -10 -14 -2 q2 8 14 2 Z M0 0 q10 -10 14 -2 q-2 8 -14 2 Z" fill="#f7a8c6" stroke="#16161a" stroke-width="1.5"/><path d="M0 -2 v8" stroke="#16161a" stroke-width="2" stroke-linecap="round"/></g>`;
+
+// Words that have a scene of their own, matched on the English meaning. Anything else falls back to an emoji picture, then the street.
+const WORD_SCENES = [ { re:/\b(garden|gardener|gardening)\b/i, svg:GARDEN_SVG } ];
+const sceneFor = p => { const m=String(p&&p.native_text||""); const hit=WORD_SCENES.find(x=>x.re.test(m)); return hit?hit.svg:null; };
 
 // Glossy 3D icons for the stat tiles
 const STAT_PALETTE = {
@@ -724,6 +826,19 @@ const IconGear = ({size=18}) => (
     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
   </svg>
 );
+const IconBolt = ({size=16}) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+  </svg>
+);
+const IllustBolt = ({size=20}) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" strokeLinejoin="round">
+    <polygon points="13.5 1.5 3.5 13.5 11.5 13.5 10 22.5 20.5 10 12.5 10" fill="#ffd23f"/>
+    <polygon points="12.5 10 20.5 10 10 22.5 11.5 13.5" fill="#ff9f1c"/>
+    <polygon points="13.5 1.5 3.5 13.5 11.5 13.5 10 22.5 20.5 10 12.5 10" fill="none" stroke="#16161a" strokeWidth="1.7"/>
+    <path d="M12.6 4.6 L7.6 11" fill="none" stroke="#fff6bf" strokeWidth="1.5" strokeLinecap="round"/>
+  </svg>
+);
 // A category with an illustration shows it in a framed picture; one without shows its emoji, loose and tilted.
 const hasTopicSvg = t => !!TOPIC_SVGS[t];
 function TopicArt({ topic, pad=18 }) {       // pad: room around the drawing, so its white sticker edge isn't cut off
@@ -760,7 +875,7 @@ function PhraseCard({ p, onEdit, onDelete, dense=false, compact=false, classic=f
     </div>
   ):null;
   const statusPill = tag&&<span style={{fontSize:9,padding:"2px 8px",borderRadius:20,background:tag.color,border:outline(1.5),fontFamily:HEAD,fontWeight:800,letterSpacing:.5,textTransform:"uppercase",color:INK,whiteSpace:"nowrap"}}>{tag.label}</span>;
-  const duePill = isDue(p)&&<span title="Due for review" style={{fontSize:10,padding:"1px 6px",borderRadius:20,background:"#ffd97a",color:INK,border:outline(1.5),fontFamily:BODY,fontWeight:600}}>⚡</span>;
+  const duePill = isDue(p)&&<span title="Due for review" style={{display:"inline-flex",color:classic?"#fff":INK}}><IconBolt size={compact?15:19}/></span>;   // an outline bolt, no badge around it
 
   // ── Compact card: the grid. About half the height of the big one, so more fit on screen. ──
   if(compact){
@@ -785,7 +900,7 @@ function PhraseCard({ p, onEdit, onDelete, dense=false, compact=false, classic=f
             <span style={{fontSize:16,color:INK,fontFamily:HEAD,fontWeight:800,lineHeight:1.2,letterSpacing:"-.3px",overflowWrap:"anywhere"}}>{p.native_text}</span>
             {tagPill}
           </div>
-          {p.notes&&<div style={{fontSize:12,color:T.inkMid,fontFamily:SERIF,fontStyle:"italic",lineHeight:1.3}}>{p.notes}</div>}
+          {p.notes&&<div style={{fontSize:12,color:T.inkMid,fontFamily:BODY,fontWeight:300,lineHeight:1.3}}>{p.notes}</div>}
           <div style={{marginTop:"auto",paddingTop:2,display:"flex",alignItems:"center",gap:6,minHeight:26}}>
             {statusPill}{duePill}
             {acc!==null&&<span style={{fontSize:10,color:T.muted,fontFamily:BODY}}>{acc}% · {p.total_reviews}</span>}
@@ -852,12 +967,12 @@ function PhraseCard({ p, onEdit, onDelete, dense=false, compact=false, classic=f
                    flexDirection:"column",justifyContent:"space-between",gap:6,
                    padding:dense?"11px 16px 12px":"14px 22px 16px",overflow:"hidden"}}>
         <div style={{minHeight:0,overflow:"hidden"}}>
-          <div style={{fontSize:9,letterSpacing:2.5,color:T.muted,fontFamily:HEAD,fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Means</div>
+          <div style={{fontSize:9,letterSpacing:2.5,color:T.muted,fontFamily:HEAD,fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Meaning</div>
           <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"4px 10px"}}>
             <div style={{fontSize:dense?18:22,color:INK,fontFamily:HEAD,fontWeight:800,lineHeight:1.15,letterSpacing:"-.4px",overflowWrap:"anywhere"}}>{p.native_text}</div>
             {tagPill}
           </div>
-          {p.notes&&<div style={{fontSize:dense?12:13,color:T.inkMid,fontFamily:SERIF,fontStyle:"italic",marginTop:6,lineHeight:1.35}}>{p.notes}</div>}
+          {p.notes&&<div style={{fontSize:dense?13:14,color:T.inkMid,fontFamily:BODY,fontWeight:300,marginTop:6,lineHeight:1.35}}>{p.notes}</div>}
         </div>
         {acc!==null&&<div style={{fontSize:10,color:T.muted,fontFamily:BODY}}>{acc}% correct · {p.total_reviews} reviews</div>}
         {actions(17,{position:"absolute",right:dense?10:16,bottom:dense?8:12})}
@@ -1107,6 +1222,8 @@ function BiliG() {
     const day=Math.floor((Date.now()-new Date().getTimezoneOffset()*6e4)/864e5);      // whole days since 1970, counted in the user's timezone
     return pool.length?pool[day%pool.length]:null;
   },[phrases,activeLang]);
+  const [wordArt,setWordArt] = useState(null);    // the emoji picture for the word of the day, if it has one
+  useEffect(()=>{ let dead=false; setWordArt(null); if(wotd&&!sceneFor(wotd)) findWordEmoji(wotd).then(e=>{ if(!dead) setWordArt(e); }); return ()=>{ dead=true; }; },[wotd&&wotd.id,wotd&&wotd.native_text]);
   const reviewWord = p=>{ setPracticeMode("all"); setCardDeck([p]); setCardIndex(0); setFlipped(false); setShowRating(false); setView("flashcard"); };
   // CRUD
   const openAdd  = ()=>{ if(readOnly)return; setEditPhrase(null); setForm({foreign_text:"",native_text:"",language:activeLang,topic:"Greetings",notes:""}); setImgPreview(null); setView("form"); };
@@ -1398,7 +1515,11 @@ function BiliG() {
   const manageView = p=>({...p,...(manageEdits[p.id]||{})});
   const manageChanged = p=>{ const e=manageEdits[p.id]||{}, patch={}; for(const f of MANAGE_FIELDS) if(f in e&&String(e[f]??"").trim()!==String(p[f]??"").trim()) patch[f]=String(e[f]??"").trim(); return patch; };
   const manageDirty = manageRows.filter(p=>Object.keys(manageChanged(p)).length>0);
-  const manageShown = manageRows.filter(p=>{ const q=manageQ.trim().toLowerCase(); if(!q) return true; const v=manageView(p); return [v.foreign_text,v.native_text,v.notes].some(x=>String(x||"").toLowerCase().includes(q)); });
+  const manageShown = manageRows.filter(p=>{
+    const toks=fold(manageQ).split(" ").filter(Boolean); if(!toks.length) return true;
+    const v=manageView(p), hay=[v.foreign_text,v.native_text,v.notes,getTopic(v.topic).label,TOPIC_AR[v.topic],kindOf(v)].map(fold);   // the phrase, translation, transliteration, category (English and Arabic), Word/Phrase
+    return toks.every(t=>hay.some(h=>h.includes(t)));                                                                              // every word typed must be found somewhere
+  });
   const patchManage = (id,patch)=>setManageEdits(e=>({...e,[id]:{...(e[id]||{}),...patch}}));
   function applyToSelected(patch){ setManageEdits(e=>{ const n={...e}; manageSel.forEach(id=>{ n[id]={...(n[id]||{}),...patch}; }); return n; }); }
   const toggleManageSel = (id,on)=>setManageSel(s=>{ const n=new Set(s); if(on) n.add(id); else n.delete(id); return n; });
@@ -1686,43 +1807,48 @@ function BiliG() {
 
           {/* ══ HOME: word of the day, then the categories ══ */}
           {libTab==="home"&&(()=>{
-            const w=wotd, wl=w&&getLang(w.language), ws=w&&getTopicStyle(w.topic), wt=w&&getTopic(w.topic);
+            const w=wotd, scene=sceneFor(w), bare=!!(scene||wordArt), wl=w&&getLang(w.language), ws=w&&getTopicStyle(w.topic), wt=w&&getTopic(w.topic), flip=!!(wl&&wl.rtl);   // flip: Arabic reads right to left, so the text sits on the right and the picture on the left
             const wlen=w?(w.foreign_text||"").length:0, wsize=Math.round((isDesktop?84:54)*(wlen>28?.5:wlen>16?.68:wlen>9?.84:1));
             const tiles=topicList.filter(t=>t.id!=="All").map(t=>({...t,n:phrases.filter(x=>x.language===activeLang&&x.topic===t.id).length})).filter(t=>t.n>0);
             return (<>
               <div style={{position:"relative",background:"#6fa8f0",border:outline(),borderRadius:22,padding:isDesktop?"30px 36px":"20px 18px 22px",overflow:"hidden",marginBottom:isDesktop?34:26,minHeight:isDesktop?300:262}}>
                 {w?(<>
-                  <div style={{position:"relative",zIndex:2,width:isDesktop?"56%":"58%"}}>
-                    <div style={{fontSize:11,letterSpacing:3,fontFamily:BODY,fontWeight:600,textTransform:"uppercase",color:INK}}>Word of the day</div>
-                    <div style={{display:"flex",alignItems:"center",gap:12,marginTop:8,flexWrap:"wrap"}}>
-                      <div dir={wl.rtl?"rtl":"ltr"} style={{fontFamily:wl.rtl?wl.font:HEAD,fontWeight:wl.rtl?700:800,fontSize:wsize,lineHeight:1.15,color:INK,overflowWrap:"anywhere"}}>{w.foreign_text}</div>
-                    </div>
-                    {w.notes&&<div style={{fontFamily:SERIF,fontStyle:"italic",fontSize:isDesktop?22:17,color:INK,marginTop:2}}>{w.notes}</div>}
+                  <div style={{position:"relative",zIndex:2,width:flip?(isDesktop?"42%":"50%"):(isDesktop?"56%":"54%"),marginLeft:flip?"auto":0,textAlign:flip?"right":"left"}}>
+                    <div style={{fontSize:11,letterSpacing:3,fontFamily:BODY,fontWeight:600,textTransform:"uppercase",color:INK}}>{kindOf(w)} of the day</div>
+                    <div dir={wl.rtl?"rtl":"ltr"} style={{fontFamily:wl.rtl?wl.font:HEAD,fontWeight:wl.rtl?700:800,fontSize:wsize,lineHeight:wl.rtl?1.4:1.1,textAlign:wl.rtl?"right":"left",width:"100%",color:INK,overflowWrap:"anywhere",marginTop:6}}>{w.foreign_text}</div>
+                    {w.notes&&<div style={{fontFamily:BODY,fontWeight:300,letterSpacing:".2px",fontSize:isDesktop?20:16,color:INK,marginTop:wl.rtl?0:4,textAlign:wl.rtl?"right":"left"}}>{w.notes}</div>}
                     <div style={{fontSize:12,fontFamily:BODY,color:INK,opacity:.75,marginTop:isDesktop?18:12}}>Meaning</div>
-                    <div style={{display:"flex",alignItems:"baseline",gap:"4px 10px",flexWrap:"wrap"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:"4px 10px",flexWrap:"wrap",justifyContent:flip?"flex-end":"flex-start"}}>
                       <div style={{fontFamily:HEAD,fontWeight:800,fontSize:isDesktop?40:28,lineHeight:1.05,color:INK,overflowWrap:"anywhere"}}>{w.native_text}</div>
                       <span style={{fontSize:10.5,padding:"1px 8px",borderRadius:999,border:"1px solid rgba(22,22,26,.22)",color:"rgba(22,22,26,.62)",fontFamily:BODY,fontWeight:500,whiteSpace:"nowrap"}}>{wt.label}</span>
                       <span style={{fontSize:10.5,padding:"1px 8px",borderRadius:999,border:"1px solid rgba(22,22,26,.22)",color:"rgba(22,22,26,.62)",fontFamily:BODY,fontWeight:500,whiteSpace:"nowrap"}}>{kindOf(w)}</span>
                     </div>
-                    <div style={{height:1,background:INK,opacity:.45,margin:isDesktop?"16px 0 14px":"12px 0 12px",width:"86%"}}/>
-                    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                      <button className="cth" onClick={()=>reviewWord(w)} style={{...(isDesktop?CTA:CTA_S),background:INK,color:"#fff",padding:isDesktop?"13px 22px":"11px 16px",cursor:"pointer",fontFamily:BODY,fontWeight:600,fontSize:isDesktop?15:13,display:"flex",alignItems:"center",gap:8}}>Review word <span aria-hidden="true">→</span></button>
+                    <div style={{height:1,background:INK,opacity:.45,margin:isDesktop?"16px 0 14px":"12px 0 12px",marginLeft:flip?"auto":0,width:"86%"}}/>
+                    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",justifyContent:flip?"flex-end":"flex-start"}}>
+                      <button className="cth" onClick={()=>reviewWord(w)} style={{...(isDesktop?CTA:CTA_S),background:CTA_PINK,color:INK,padding:isDesktop?"13px 22px":"11px 16px",cursor:"pointer",fontFamily:BODY,fontWeight:600,fontSize:isDesktop?15:13,display:"flex",alignItems:"center",gap:8}}>Review {kindOf(w).toLowerCase()} <span aria-hidden="true">→</span></button>
                     </div>
                   </div>
                   {/* the "photo": a tilted print of an illustrated street, with the word's category as a sticker on it */}
-                  <div style={{position:"absolute",right:isDesktop?44:-14,top:isDesktop?32:28,width:isDesktop?250:"46%",height:isDesktop?330:"82%",zIndex:1}}>
-                    {/* a soft glowing fan of three rays off the photo's corner */}
-                    <svg aria-hidden="true" viewBox="0 0 64 56" style={{position:"absolute",left:isDesktop?-58:-43,top:isDesktop?-50:-37,width:isDesktop?64:48,height:isDesktop?56:42,zIndex:2,overflow:"visible",
-                         filter:"drop-shadow(0 0 3px rgba(255,255,255,.95)) drop-shadow(0 0 9px rgba(255,255,255,.7))"}} fill="none" strokeLinecap="round">
-                      <g stroke="#fff" strokeWidth="3.6"><path d="M45 46.5 L28 40.4"/><path d="M50.8 38.9 L38.2 20.9"/><path d="M60 36 L60 18"/></g>
+                  <div style={{position:"absolute",[flip?"left":"right"]:isDesktop?44:-14,top:isDesktop?32:28,width:isDesktop?250:(flip?"44%":"46%"),height:isDesktop?330:"82%",zIndex:1}}>
+                    {/* a fan of three plain ink lines off the photo's corner */}
+                    <svg aria-hidden="true" viewBox="0 0 64 56" style={{position:"absolute",[flip?"right":"left"]:isDesktop?-58:-43,top:isDesktop?-50:-37,width:isDesktop?64:48,height:isDesktop?56:42,zIndex:2,overflow:"visible",transform:flip?"scaleX(-1)":"none"}} fill="none" strokeLinecap="round">
+                      <g stroke={INK} strokeWidth="3"><path d="M45 46.5 L28 40.4"/><path d="M50.8 38.9 L38.2 20.9"/><path d="M60 36 L60 18"/></g>
                     </svg>
-                    <div style={{position:"absolute",left:-14,bottom:36,width:34,height:34,background:"#f8b5c8",zIndex:0}}/>
-                    <div style={{position:"absolute",inset:0,background:"#fff",border:outline(),borderRadius:10,padding:7,transform:"rotate(5deg)",boxShadow:SOFT,zIndex:1}}>
-                      <svg viewBox="0 0 200 280" preserveAspectRatio="xMidYMid slice" style={{width:"100%",height:"100%",display:"block",borderRadius:5}} aria-hidden="true" dangerouslySetInnerHTML={{__html:CITY_SVG}}/>
+                    {!bare&&<div style={{position:"absolute",[flip?"right":"left"]:-14,bottom:36,width:34,height:34,background:"#f8b5c8",zIndex:0}}/>}
+                    <div style={{position:"absolute",inset:0,background:"#fff",border:outline(),borderRadius:10,padding:7,transform:`rotate(${flip?-5:5}deg)`,boxShadow:SOFT,zIndex:1}}>
+                      {wordArt?(
+                        <div style={{width:"100%",height:"100%",borderRadius:5,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",background:`radial-gradient(circle at 50% 42%, #fff 0%, ${ws.bg} 80%)`}}>
+                          <WordArt emoji={wordArt} onFail={()=>setWordArt(null)} style={{width:"78%",height:"auto",transform:`rotate(${flip?-6:6}deg)`,filter:"url(#sticker)"}}/>
+                        </div>
+                      ):(
+                        <svg viewBox="0 0 200 280" preserveAspectRatio="xMidYMid slice" style={{width:"100%",height:"100%",display:"block",borderRadius:5}} aria-hidden="true" dangerouslySetInnerHTML={{__html:scene||CITY_SVG}}/>
+                      )}
                     </div>
-                    <div aria-hidden="true" style={{position:"absolute",left:isDesktop?-26:-18,bottom:isDesktop?10:6,width:isDesktop?86:64,height:isDesktop?86:64,zIndex:2,transform:"rotate(-8deg)",filter:"url(#sticker)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:isDesktop?58:42}}>
+                    {!bare&&(
+                    <div aria-hidden="true" style={{position:"absolute",[flip?"right":"left"]:isDesktop?-26:-18,bottom:isDesktop?10:6,width:isDesktop?86:64,height:isDesktop?86:64,zIndex:2,transform:`rotate(${flip?8:-8}deg)`,filter:"url(#sticker)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:isDesktop?58:42}}>
                       {hasTopicSvg(w.topic)?<TopicArt topic={w.topic}/>:wt.icon}
                     </div>
+                    )}
                   </div>
                 </>):(
                   <div style={{position:"relative",zIndex:2,maxWidth:420}}>
@@ -1733,12 +1859,15 @@ function BiliG() {
                 )}
               </div>
 
+              {w&&wordArt&&<div style={{fontSize:10,color:T.muted,fontFamily:BODY,textAlign:"right",margin:isDesktop?"-24px 4px 22px":"-18px 4px 16px"}}>Picture: <a href="https://openmoji.org" target="_blank" rel="noopener" style={{color:"inherit"}}>OpenMoji</a> · CC BY-SA 4.0</div>}
               {tiles.length>0&&(<>
                 <div style={{fontFamily:HEAD,fontWeight:800,fontSize:isDesktop?34:30,letterSpacing:"-.4px",color:INK,margin:"0 0 14px"}}>Explore by category</div>
                 <div style={{display:"grid",gridTemplateColumns:isDesktop?"repeat(3,1fr)":"repeat(2,1fr)",gap:isDesktop?18:12}}>
-                  {tiles.map(t=>(
+                  {tiles.map((t,i)=>(
                     <button key={t.id} className="tile" onClick={()=>{ setTopicFilter(t.id); setLibTab("cards"); }}
-                      style={{position:"relative",textAlign:"left",background:getTopicStyle(t.id).bg,border:outline(),borderRadius:18,padding:isDesktop?"16px 18px":"12px 12px",minHeight:isDesktop?148:120,cursor:"pointer",overflow:"hidden",display:"flex",flexDirection:"column",justifyContent:"space-between",fontFamily:BODY,color:INK}}>
+                      style={{position:"relative",textAlign:"left",background:getTopicStyle(t.id).bg,border:"none",borderRadius:18,padding:isDesktop?"16px 18px":"12px 12px",minHeight:isDesktop?148:120,cursor:"pointer",overflow:"visible",display:"flex",flexDirection:"column",justifyContent:"space-between",fontFamily:BODY,color:INK}}>
+                      {/* the outline: a plain rounded border, smooth at any tile size, same stroke weight as every other outline */}
+                      <div aria-hidden="true" style={{position:"absolute",inset:0,border:outline(),borderRadius:18,pointerEvents:"none",zIndex:3}}/>
                       <div style={{position:"relative",zIndex:2,maxWidth:"62%"}}>
                         <div style={{fontFamily:HEAD,fontWeight:800,fontSize:isDesktop?26:20,lineHeight:1.05,letterSpacing:"-.2px",overflowWrap:"anywhere"}}>{t.label}</div>
                         {TOPIC_AR[t.id]&&<div dir="rtl" style={{fontFamily:"'Scheherazade New',serif",fontSize:isDesktop?18:15,color:"rgba(22,22,26,.65)",marginTop:2}}>{TOPIC_AR[t.id]}</div>}
@@ -1907,9 +2036,9 @@ function BiliG() {
                 <div style={{marginTop:24,fontSize:10,color:"rgba(22,22,26,.5)",fontFamily:BODY}}>tap to reveal</div>
               </div>
               <div className="face face-b" style={{position:"absolute",width:"100%",height:"100%",background:T.surface,border:outline(2.5),borderRadius:24,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,boxSizing:"border-box",boxShadow:drop(6,6)}}>
-                <div style={{fontSize:9,letterSpacing:2.5,color:T.muted,fontFamily:HEAD,fontWeight:700,textTransform:"uppercase",marginBottom:14}}>Means</div>
+                <div style={{fontSize:9,letterSpacing:2.5,color:T.muted,fontFamily:HEAD,fontWeight:700,textTransform:"uppercase",marginBottom:14}}>Meaning</div>
                 <div style={{fontSize:30,textAlign:"center",color:INK,fontFamily:HEAD,fontWeight:800,lineHeight:1.15,letterSpacing:"-.5px"}}>{fcard?.native_text}</div>
-                {fcard?.notes&&<div style={{marginTop:14,fontSize:14,color:T.inkMid,fontFamily:SERIF,fontStyle:"italic",textAlign:"center",lineHeight:1.4}}>{fcard.notes}</div>}
+                {fcard?.notes&&<div style={{marginTop:14,fontSize:15,color:T.inkMid,fontFamily:BODY,fontWeight:300,textAlign:"center",lineHeight:1.4}}>{fcard.notes}</div>}
               </div>
             </div>
           </div>
@@ -2331,7 +2460,7 @@ function BiliG() {
           <div style={{fontSize:isDesktop?22:19,fontWeight:800,fontFamily:HEAD,marginBottom:8,color:INK,letterSpacing:"-.6px"}}>{manageRows.length} {activeLang} phrase{manageRows.length===1?"":"s"}</div>
           <div style={{fontSize:12,color:T.muted,fontFamily:SERIF,fontStyle:"italic",lineHeight:1.55,marginBottom:14}}>Change any field, or tick phrases to give them a category or delete them together. Edited rows turn yellow. Nothing is saved until you press Save.</div>
 
-          <input value={manageQ} onChange={e=>setManageQ(e.target.value)} placeholder="Search these phrases…" aria-label="Search phrases" style={{...iSt,marginBottom:12,padding:"10px 14px"}}/>
+          <input value={manageQ} onChange={e=>setManageQ(e.target.value)} placeholder="Search phrases, transliterations, categories…" aria-label="Search phrases" style={{...iSt,marginBottom:12,padding:"10px 14px"}}/>
 
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
             <span style={{flex:1,fontSize:12,color:T.muted,fontFamily:BODY}}>{manageSel.size} of {manageRows.length} selected{manageQ.trim()?` · ${manageShown.length} shown`:""}</span>
@@ -2433,9 +2562,9 @@ function BiliG() {
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:18}}>
             {[
               // Once today's review is done there is nothing due: Practice takes Review's place.
-              {key:"practice", icon:"🃏", label:"Practice",   onClick:()=>startPractice("all"), bg:dueCount>0?T.surface:INK, fg:dueCount>0?INK:"#fff"},
-              {key:"due",      icon:"⚡", label:"Review",     onClick:()=>startPractice("due"), bg:INK,       fg:"#fff"},
-              {key:"add",      icon:"+",  label:"Add phrase", onClick:tryAdd,                   bg:T.pink,    fg:INK, strong:true},
+              {key:"practice", icon:"🃏", label:"Practice",   onClick:()=>startPractice("all"), bg:CTA_PINK, fg:INK},
+              {key:"due",      icon:<IllustBolt size={21}/>, label:"Review",     onClick:()=>startPractice("due"), bg:CTA_PINK, fg:INK},
+              {key:"add",      icon:"+",  label:"Add phrase", onClick:tryAdd,                   bg:CTA_NAVY, fg:"#fff", strong:true},
             ].filter(b=>b.key==="add"||(b.key==="due")===(dueCount>0)).map(b=>(         // Review while today's review isn't done, Practice once it is
             
               <button key={b.key} className="cth" onClick={b.onClick}
@@ -2458,13 +2587,13 @@ function BiliG() {
             {/* Review — once today's review is done, Practice takes its place */}
             {dueCount>0?(
               <button className="cth" onClick={()=>startPractice("due")}
-                style={{...CTA_S,flex:1,background:INK,color:"#fff",fontFamily:HEAD,fontWeight:700,fontSize:13,padding:"14px 8px",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-                <span>⚡</span>
+                style={{...CTA_S,flex:1,background:CTA_PINK,color:INK,fontFamily:HEAD,fontWeight:700,fontSize:13,padding:"14px 8px",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+                <IllustBolt size={19}/>
                 <span>Review</span>
               </button>
             ):(
               <button className="cth" onClick={()=>startPractice("all")}
-                style={{...CTA_S,flex:1,background:INK,color:"#fff",fontFamily:HEAD,fontWeight:700,fontSize:13,padding:"14px 8px",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+                style={{...CTA_S,flex:1,background:CTA_PINK,color:INK,fontFamily:HEAD,fontWeight:700,fontSize:13,padding:"14px 8px",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
                 <span>🃏</span>
                 <span>Practice</span>
               </button>
@@ -2472,7 +2601,7 @@ function BiliG() {
 
             {/* Add a phrase (Snap, Upload and Paste are on that screen) */}
             <button className="plus-fab" onClick={tryAdd} aria-label="Add a phrase"
-              style={{...CTA_S,width:58,height:58,borderRadius:"50%",background:T.pink,color:INK,fontSize:30,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontWeight:400}}>
+              style={{...CTA_S,width:58,height:58,borderRadius:"50%",background:CTA_NAVY,color:"#fff",fontSize:30,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontWeight:400}}>
               +
             </button>
 
