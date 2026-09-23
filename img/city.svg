@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 280" width="200" height="280" role="img">
+  <rect width="200" height="280" fill="#8fc2f7"/>
+  <circle cx="32" cy="38" r="19" fill="#ffd45e" stroke="#16161a" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <g fill="#fff">
+    <rect x="70" y="26" width="58" height="19" rx="9.5" stroke="#16161a" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <rect x="82" y="13" width="34" height="17" rx="8.5" stroke="#16161a" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round"/>
+  </g>
+
+  <!-- minaret -->
+  <path d="M143 64 Q157 34 171 64 Z" fill="#e8dcc6" stroke="#16161a" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M157 34 L157 22" stroke="#16161a" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/><circle cx="157" cy="17" r="5" fill="#ffd45e" stroke="#16161a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+  <rect x="145" y="64" width="24" height="150" fill="#fdf6e8" stroke="#16161a" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M145 104 H169 M145 140 H169" stroke="#16161a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+
+  <!-- the mosque -->
+  <path d="M74 152 Q74 104 103 104 Q132 104 132 152 Z" fill="#e8dcc6" stroke="#16161a" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M103 104 L103 90" stroke="#16161a" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/><circle cx="103" cy="85" r="5.5" fill="#ffd45e" stroke="#16161a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+  <rect x="70" y="150" width="66" height="64" fill="#fdf6e8" stroke="#16161a" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M92 214 v-28 a11 11 0 0 1 22 0 v28 Z" fill="#6b4a2f" stroke="#16161a" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round"/>
+
+  <!-- block on the left -->
+  <rect x="2" y="122" width="54" height="92" fill="#f2c760" stroke="#16161a" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <rect x="9" y="138" width="17" height="17" fill="#6fa8f0" stroke="#16161a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/><rect x="31" y="138" width="17" height="17" fill="#6fa8f0" stroke="#16161a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/><rect x="9" y="172" width="17" height="17" fill="#6fa8f0" stroke="#16161a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/><rect x="31" y="172" width="17" height="17" fill="#6fa8f0" stroke="#16161a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+
+  <!-- ground -->
+  <rect x="0" y="212" width="200" height="68" fill="#eccf9f" stroke="#16161a" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M0 240 H200" stroke="#16161a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+
+  <!-- palm -->
+  <path d="M56 214 q-4 -38 14 -64 l12 7 q-16 26 -14 57 Z" fill="#8a5a34" stroke="#16161a" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <g fill="#2f7d3f" stroke="#16161a" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M76 150 q-30 -14 -40 6 q26 8 40 -6 Z"/>
+    <path d="M76 150 q-14 -32 6 -40 q8 26 -6 40 Z"/>
+    <path d="M76 150 q26 -24 44 -8 q-24 16 -44 8 Z"/>
+    <path d="M76 150 q6 26 32 26 q-12 -22 -32 -26 Z"/>
+  </g>
+  <circle cx="76" cy="150" r="6" fill="#6b4a2f" stroke="#16161a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

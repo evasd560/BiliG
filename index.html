@@ -471,48 +471,12 @@ const TOPIC_SVGS = {
     <polygon points="115.3,63.0 117.0,83.0 137.0,84.7 124.0,100.0 137.0,115.3 117.0,117.0 115.3,137.0 100.0,124.0 84.7,137.0 83.0,117.0 63.0,115.3 76.0,100.0 63.0,84.7 83.0,83.0 84.7,63.0 100.0,76.0" fill="#4aa59a" ${SK} stroke-width="3.5"/>
     <circle cx="100" cy="100" r="9" fill="#fff" ${SK} stroke-width="3.5"/>`,
 };
-// The "photo" in the word-of-the-day card: an illustrated street scene.
-const CITY_SVG = `
-  <defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#78b5f6"/><stop offset="1" stop-color="#d9edff"/></linearGradient></defs>
-  <rect width="200" height="280" fill="url(#sky)"/>
-  <rect x="92" y="150" width="108" height="130" fill="#f1e3cb"/>
-  <path d="M106 150 Q106 112 144 112 Q182 112 182 150 Z" fill="#fbf4e8"/><rect x="142" y="92" width="4" height="22" fill="#e6d7bb"/>
-  <rect x="176" y="64" width="20" height="150" fill="#fbf4e8"/><path d="M174 64 Q186 34 198 64 Z" fill="#e6d7bb"/><rect x="176" y="100" width="20" height="5" fill="#e6d7bb"/><rect x="176" y="130" width="20" height="5" fill="#e6d7bb"/>
-  <rect x="0" y="58" width="98" height="222" fill="#d8b28a"/><rect x="0" y="58" width="98" height="10" fill="#c79b72"/>
-  <path d="M14 150 v-40 a15 15 0 0 1 30 0 v40 z M56 150 v-40 a15 15 0 0 1 30 0 v40 z" fill="#5a3b26"/>
-  <path d="M14 226 v-40 a15 15 0 0 1 30 0 v40 z M56 226 v-40 a15 15 0 0 1 30 0 v40 z" fill="#5a3b26"/>
-  <path d="M40 58 L40 84" stroke="#222" stroke-width="2.5"/><path d="M32 84 L48 84 L44 108 L36 108 Z" fill="#222"/><rect x="34" y="88" width="12" height="14" fill="#f5c76a"/>
-  <path d="M170 282 Q160 226 176 170" fill="none" stroke="#8a5a34" stroke-width="9" stroke-linecap="round"/>
-  <path d="M176 170 Q146 146 118 168 Q150 154 176 170 Z M176 170 Q150 176 130 204 Q160 180 176 170 Z M176 170 Q206 150 200 124 Q194 154 176 170 Z M176 170 Q174 132 150 116 Q168 144 176 170 Z M176 170 Q206 172 200 202 Q192 178 176 170 Z" fill="#2f7d3f"/>
-  <rect y="252" width="200" height="30" fill="#e6c99d"/>`;
-
-// A garden for words about gardening: flat, like the street scene (200x280).
-const gardenFlower = (x,y,h,petal,mid="#ffd45e") => `<path d="M${x} ${y} q-2 ${h/2} 1 ${h}" fill="none" stroke="#2f7d3f" stroke-width="2.2" stroke-linecap="round"/><path d="M${x} ${y+h*.55} q-9 -3 -11 -10 q9 0 11 10 Z M${x} ${y+h*.7} q9 -3 11 -10 q-9 0 -11 10 Z" fill="#3f9a55"/>${[0,72,144,216,288].map(a=>`<ellipse cx="${x}" cy="${y-5.5}" rx="3.6" ry="5.6" fill="${petal}" transform="rotate(${a} ${x} ${y})"/>`).join("")}<circle cx="${x}" cy="${y}" r="3.4" fill="${mid}"/>`;
-const gardenSprout = (x,y,c="#4caf5c") => `<path d="M${x} ${y} q-14 -4 -16 -18 q14 2 16 18 Z M${x} ${y} q14 -4 16 -18 q-14 2 -16 18 Z M${x} ${y} q-3 -12 0 -24 q3 12 0 24 Z" fill="${c}"/>`;
-const GARDEN_SVG = `
-  <defs><linearGradient id="gsky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#84c4f7"/><stop offset="1" stop-color="#e6f5ff"/></linearGradient></defs>
-  <rect width="200" height="280" fill="url(#gsky)"/>
-  <circle cx="158" cy="52" r="30" fill="#fff3b8" opacity=".55"/><circle cx="158" cy="52" r="19" fill="#ffd45e"/>
-  <g fill="#fff"><ellipse cx="46" cy="44" rx="24" ry="8"/><ellipse cx="62" cy="38" rx="15" ry="8"/><ellipse cx="128" cy="90" rx="20" ry="6"/><ellipse cx="140" cy="85" rx="12" ry="6"/></g>
-  <path d="M0 132 Q40 100 84 124 Q130 96 200 128 V190 H0 Z" fill="#b6dcaa"/>
-  <path d="M0 152 Q56 126 110 148 Q158 130 200 150 V200 H0 Z" fill="#8ecb86"/>
-  <rect x="150" y="118" width="4" height="34" fill="#8a5a34"/><circle cx="152" cy="112" r="17" fill="#3f9a55"/><circle cx="141" cy="120" r="11" fill="#4caf5c"/><circle cx="164" cy="121" r="10" fill="#4caf5c"/><circle cx="147" cy="109" r="3" fill="#e5484d"/><circle cx="160" cy="116" r="3" fill="#e5484d"/><circle cx="153" cy="124" r="3" fill="#e5484d"/>
-  <rect x="0" y="176" width="200" height="104" fill="#7cc46c"/>
-  <g fill="#fff" stroke="#e4dccb" stroke-width="1">${Array.from({length:11},(_,i)=>`<path d="M${i*19-2} 188 v-30 l6 -6 l6 6 v30 Z"/>`).join("")}</g>
-  <rect x="0" y="166" width="200" height="4" fill="#fff"/><rect x="0" y="178" width="200" height="4" fill="#fff"/>
-  <rect x="0" y="188" width="200" height="92" fill="#6cb85e"/>
-  <path d="M0 214 Q100 202 200 214 V250 Q100 262 0 250 Z" fill="#9a6a42"/>
-  <path d="M0 214 Q100 202 200 214" fill="none" stroke="#b98657" stroke-width="3"/>
-  <path d="M8 228 Q100 218 192 228 M8 240 Q100 232 192 240" fill="none" stroke="#83552f" stroke-width="2"/>
-  ${gardenSprout(28,232)}${gardenSprout(66,229,"#57b566")}${gardenSprout(104,230)}${gardenSprout(142,229,"#57b566")}${gardenSprout(176,232)}
-  ${gardenFlower(22,254,22,"#f7a8c6")}${gardenFlower(52,258,18,"#ffd45e","#f0883a")}${gardenFlower(84,254,24,"#b9a7f0")}${gardenFlower(116,258,18,"#fff","#ffd45e")}${gardenFlower(148,254,22,"#f7a8c6")}${gardenFlower(178,258,18,"#ff9d5c")}
-  <g transform="translate(104 148) rotate(24)"><path d="M0 0 h26 l-3 22 h-20 Z" fill="#5aa6ef" stroke="#2258b8" stroke-width="2" stroke-linejoin="round"/><path d="M26 6 l20 -8 l-2 6 l-16 10 Z" fill="#5aa6ef" stroke="#2258b8" stroke-width="2" stroke-linejoin="round"/><path d="M0 4 q-10 -4 -10 8" fill="none" stroke="#2258b8" stroke-width="2.5" stroke-linecap="round"/><path d="M4 -2 q10 -12 22 -2" fill="none" stroke="#2258b8" stroke-width="2.5" stroke-linecap="round"/></g>
-  <g fill="#8fd0ff"><path d="M150 176 q-2 5 0 8 q3 -3 0 -8 Z"/><path d="M155 190 q-2 5 0 8 q3 -3 0 -8 Z"/><path d="M147 194 q-2 5 0 8 q3 -3 0 -8 Z"/><path d="M158 204 q-2 5 0 8 q3 -3 0 -8 Z"/></g>
-  <g transform="translate(58 158)"><path d="M0 0 q-10 -10 -14 -2 q2 8 14 2 Z M0 0 q10 -10 14 -2 q-2 8 -14 2 Z" fill="#f7a8c6" stroke="#16161a" stroke-width="1.5"/><path d="M0 -2 v8" stroke="#16161a" stroke-width="2" stroke-linecap="round"/></g>`;
-
+// The "photo" in the word-of-the-day card: a street scene, drawn in the same
+// heavy-ink language as the topic art — flat blocks, thick outlines, no gradients.
 // Words that have a scene of their own, matched on the English meaning. Anything else falls back to an emoji picture, then the street.
-const WORD_SCENES = [ { re:/\b(garden|gardener|gardening)\b/i, svg:GARDEN_SVG } ];
-const sceneFor = p => { const m=String(p&&p.native_text||""); const hit=WORD_SCENES.find(x=>x.re.test(m)); return hit?hit.svg:null; };
+const CITY_SCENE = "img/city.svg";
+const WORD_SCENES = [ { re:/\b(garden|gardener|gardening)\b/i, src:"img/garden.svg" } ];
+const sceneFor = p => { const m=String(p&&p.native_text||""); const hit=WORD_SCENES.find(x=>x.re.test(m)); return hit?hit.src:null; };
 
 // Glossy 3D icons for the stat tiles
 const STAT_PALETTE = {
@@ -1083,7 +1047,42 @@ function BiliG() {
   },[view,deckMode]);
 
   const toast$ = (msg,type="success")=>{ clearTimeout(toastRef.current); setToast({msg,type}); toastRef.current=setTimeout(()=>setToast(null),3200); };
-  const ah = ()=>({Authorization:`Bearer ${session?.access_token}`});
+  // The live session, readable from inside a request without waiting for a re-render.
+  const sessionRef = useRef(session);
+  useEffect(()=>{ sessionRef.current=session; },[session]);
+  const refreshing = useRef(null);
+
+  // Swap the expired token for a fresh one. Callers share a single in-flight request.
+  const refreshToken = () => {
+    if(refreshing.current) return refreshing.current;
+    const rt = sessionRef.current?.refresh_token;
+    if(!rt) return Promise.resolve(null);
+    refreshing.current = authFetch("/token?grant_type=refresh_token",{refresh_token:rt})
+      .catch(()=>({}))
+      .then(res=>{
+        refreshing.current = null;
+        if(!res.access_token) return null;
+        const next = { access_token:res.access_token, refresh_token:res.refresh_token||rt,
+                       expires_at_ms:Date.now()+(res.expires_in||3600)*1000, user:res.user||sessionRef.current?.user };
+        sessionRef.current = next; setSession(next); return next;
+      });
+    return refreshing.current;
+  };
+
+  // An authenticated REST call. Renews the token when it is stale, and retries once
+  // if the server rejects it anyway — a token can expire mid-flight, or while the
+  // laptop is asleep and timers are frozen.
+  const sbAuth = async (path, opts={}) => {
+    let s = sessionRef.current;
+    if(s?.refresh_token && (!s.expires_at_ms || s.expires_at_ms-Date.now() < 60000)) s = (await refreshToken()) || s;
+    const send = tok => fetch(`${SB_URL}/rest/v1${path}`,{ ...opts,
+      headers:{ apikey:SB_KEY, "Content-Type":"application/json", Prefer:"return=representation",
+                Authorization:`Bearer ${tok}`, ...opts.headers } });
+    let r = await send(s?.access_token);
+    if(r.status===401){ const fresh = await refreshToken(); if(fresh) r = await send(fresh.access_token); }
+    if(r.status===401){ endSession(); toast$("Your admin session ended. Sign in again to make changes.","info"); return null; }
+    return r.json().catch(()=>null);
+  };
 
   // DB
   const loadPhrases = async()=>{
@@ -1101,7 +1100,7 @@ function BiliG() {
       setPhrases(rows); return;
     }
     setDbLoading(true);
-    const data=await sbFetch("/phrases?order=created_at.desc",{headers:ah()});
+    const data=await sbAuth("/phrases?order=created_at.desc");
     if(Array.isArray(data)) setPhrases(data);
     else if(data?.code==="PGRST303"||/jwt/i.test(data?.message||"")) await renewSession();
     else toast$("Could not load — check Supabase table","error");
@@ -1116,18 +1115,18 @@ function BiliG() {
   const dbInsert = async row=>{
     if(readOnly) return;
     if(isGuest){ const r={...row,id:newLocalId(),created_at:new Date().toISOString()}; setPhrases(p=>{const n=[r,...p];guestWrite(n);return n;}); return; }
-    const d=await sbFetch("/phrases",{method:"POST",headers:ah(),body:JSON.stringify(row)}); if(Array.isArray(d)&&d[0])setPhrases(p=>[d[0],...p]); else toast$("Save failed","error"); };
+    const d=await sbAuth("/phrases",{method:"POST",body:JSON.stringify(row)}); if(Array.isArray(d)&&d[0])setPhrases(p=>[d[0],...p]); else toast$("Save failed","error"); };
   const dbUpdate = async(id,patch)=>{
     if(readOnly){ const o=progressRead(); o[id]={...o[id],...patch}; progressWrite(o); setPhrases(p=>p.map(x=>x.id===id?{...x,...patch}:x)); return true; }
     if(isGuest){ setPhrases(p=>{const n=p.map(x=>x.id===id?{...x,...patch}:x);guestWrite(n);return n;}); return true; }
     // Supabase answers with the rows it changed: none means nothing was saved (not yours, or signed out)
-    const d=await sbFetch(`/phrases?id=eq.${id}`,{method:"PATCH",headers:ah(),body:JSON.stringify(patch)}).catch(()=>null);
+    const d=await sbAuth(`/phrases?id=eq.${id}`,{method:"PATCH",body:JSON.stringify(patch)}).catch(()=>null);
     if(Array.isArray(d)&&d.length){ setPhrases(p=>p.map(x=>x.id===id?{...x,...patch}:x)); return true; }
     return false; };
   const dbDelete = async id=>{
     if(readOnly) return false;
     if(isGuest){ setPhrases(p=>{const n=p.filter(x=>x.id!==id);guestWrite(n);return n;}); return true; }
-    const d=await sbFetch(`/phrases?id=eq.${id}`,{method:"DELETE",headers:ah()}).catch(()=>null);
+    const d=await sbAuth(`/phrases?id=eq.${id}`,{method:"DELETE"}).catch(()=>null);
     if(Array.isArray(d)&&d.length){ setPhrases(p=>p.filter(x=>x.id!==id)); return true; }
     return false; };
 
@@ -1177,16 +1176,28 @@ function BiliG() {
   const logout = ()=>{ endSession(); setPhrases([]); };
   // Sessions last about an hour: swap in a fresh token, or fall back to visitor mode if that fails.
   const renewSession = async()=>{
-    const rt=session?.refresh_token;
-    const res=rt?await authFetch("/token?grant_type=refresh_token",{refresh_token:rt}).catch(()=>({})):{};
-    if(res.access_token) setSession({access_token:res.access_token,refresh_token:res.refresh_token||rt,expires_at_ms:Date.now()+(res.expires_in||3600)*1000,user:res.user||session.user});
-    else{ endSession(); toast$("Your admin session ended. Tap Add phrase to sign in again.","info"); }
+    if(!sessionRef.current?.refresh_token) return;
+    if(!(await refreshToken())){ endSession(); toast$("Your admin session ended. Tap Add phrase to sign in again.","info"); }
   };
   useEffect(()=>{
-    if(!session?.refresh_token||!session.expires_at_ms) return;
-    const t=setTimeout(renewSession,Math.max(0,session.expires_at_ms-Date.now()-60000));
+    if(!session?.refresh_token) return;
+    // A session saved before expiry was tracked is treated as due now.
+    const due = session.expires_at_ms ? session.expires_at_ms-Date.now()-60000 : 0;
+    const t=setTimeout(renewSession,Math.max(0,due));
     return ()=>clearTimeout(t);
   },[session]);
+  // Timers are frozen while the tab is hidden or the machine sleeps, so top the
+  // token up whenever the app comes back into view.
+  useEffect(()=>{
+    const onWake=()=>{
+      const s=sessionRef.current;
+      if(document.visibilityState==="hidden"||!s?.refresh_token) return;
+      if(!s.expires_at_ms||s.expires_at_ms-Date.now()<60000) refreshToken();
+    };
+    document.addEventListener("visibilitychange",onWake);
+    window.addEventListener("focus",onWake);
+    return ()=>{ document.removeEventListener("visibilitychange",onWake); window.removeEventListener("focus",onWake); };
+  },[]);
 
   // Derived
   const streak   = calcStreak(phrases);
@@ -1215,16 +1226,44 @@ function BiliG() {
 
   // The word of the day: a new one each day (from local midnight), rotating through the phrases in this language.
   // Only ones with a transliteration are used, so the card always has one (any phrase if none have).
-  const wotd = useMemo(()=>{
+  const daily = useMemo(()=>{
     const inLang=phrases.filter(p=>p.language===activeLang);
-    const withTr=inLang.filter(p=>String(p.notes||"").trim());
-    const pool=(withTr.length?withTr:inLang).sort((a,b)=>String(a.id).localeCompare(String(b.id)));
     const day=Math.floor((Date.now()-new Date().getTimezoneOffset()*6e4)/864e5);      // whole days since 1970, counted in the user's timezone
-    return pool.length?pool[day%pool.length]:null;
+    const pick=kind=>{
+      const ofKind=inLang.filter(p=>kindOf(p)===kind);
+      const withTr=ofKind.filter(p=>String(p.notes||"").trim());                      // prefer ones that have a transliteration
+      const pool=(withTr.length?withTr:ofKind).sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+      return pool.length?pool[day%pool.length]:null;
+    };
+    return [pick("Word"),pick("Phrase")].filter(Boolean);                             // word first, then phrase
   },[phrases,activeLang]);
-  const [wordArt,setWordArt] = useState(null);    // the emoji picture for the word of the day, if it has one
-  useEffect(()=>{ let dead=false; setWordArt(null); if(wotd&&!sceneFor(wotd)) findWordEmoji(wotd).then(e=>{ if(!dead) setWordArt(e); }); return ()=>{ dead=true; }; },[wotd&&wotd.id,wotd&&wotd.native_text]);
-  const reviewWord = p=>{ setPracticeMode("all"); setCardDeck([p]); setCardIndex(0); setFlipped(false); setShowRating(false); setView("flashcard"); };
+  const [dailyIdx,setDailyIdx] = useState(0);                                         // which of the two is showing
+  useEffect(()=>{ setDailyIdx(0); },[activeLang]);
+  const wotd = daily[Math.min(dailyIdx,daily.length-1)] || null;
+
+  const [wordArt,setWordArt] = useState({});      // emoji picture per daily pick, keyed by id
+  const artAsked = useRef(new Set());
+  useEffect(()=>{
+    let dead=false;
+    daily.forEach(p=>{
+      if(sceneFor(p)||artAsked.current.has(p.id)) return;
+      artAsked.current.add(p.id);
+      findWordEmoji(p).then(e=>{ if(!dead) setWordArt(m=>({...m,[p.id]:e})); });
+    });
+    return ()=>{ dead=true; };
+  },[daily]);
+
+  // Swipe or drag between the two
+  const heroX = useRef(0), heroDragging = useRef(false);
+  const heroGo = d => setDailyIdx(i=>Math.max(0,Math.min(daily.length-1,i+d)));
+  const heroSwipe = {
+    onTouchStart:e=>{ heroX.current=e.touches[0].clientX; },
+    onTouchEnd:e=>{ const dx=heroX.current-e.changedTouches[0].clientX; if(Math.abs(dx)>50) heroGo(dx>0?1:-1); },
+    onMouseDown:e=>{ heroDragging.current=true; heroX.current=e.clientX; },
+    onMouseUp:e=>{ if(!heroDragging.current)return; heroDragging.current=false;
+                   const dx=heroX.current-e.clientX; if(Math.abs(dx)>40) heroGo(dx>0?1:-1); },
+    onMouseLeave:()=>{ heroDragging.current=false; },
+  };
   // CRUD
   const openAdd  = ()=>{ if(readOnly)return; setEditPhrase(null); setForm({foreign_text:"",native_text:"",language:activeLang,topic:"Greetings",notes:""}); setImgPreview(null); setView("form"); };
   // A visitor who taps an add button gets the admin login instead; signing in carries on to Add phrase.
@@ -1239,7 +1278,7 @@ function BiliG() {
       total_reviews:r.total_reviews||0, good_reviews:r.good_reviews||0, created_at:r.created_at||new Date().toISOString(), user_id:session.user.id,
     }));
     if(!body.length){ try{localStorage.setItem(IMPORTED_KEY,"1");}catch{} setDeviceCount(0); setDeviceBusy(false); toast$("Those phrases are already in the library","info"); return; }
-    const d=await sbFetch("/phrases",{method:"POST",headers:ah(),body:JSON.stringify(body)}).catch(()=>null);
+    const d=await sbAuth("/phrases",{method:"POST",body:JSON.stringify(body)}).catch(()=>null);
     if(Array.isArray(d)&&d.length){
       setPhrases(prev=>[...d,...prev]); try{localStorage.setItem(IMPORTED_KEY,"1");}catch{}
       setDeviceCount(0); toast$(`${d.length} phrase${d.length>1?"s":""} added to the shared library ✓`);
@@ -1407,7 +1446,7 @@ function BiliG() {
   const enc = encodeURIComponent;
   const saveCatEmoji = async(name,emoji)=>{
     if(!catsReady){ toast$("Saving an emoji needs the one-time database update first","error"); return false; }
-    const d=await sbFetch("/categories",{method:"POST",headers:{...ah(),Prefer:"resolution=merge-duplicates,return=representation"},body:JSON.stringify({name,emoji,user_id:session.user.id})}).catch(()=>null);
+    const d=await sbAuth("/categories",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=representation"},body:JSON.stringify({name,emoji,user_id:session.user.id})}).catch(()=>null);
     if(Array.isArray(d)&&d.length){ CATEGORY_EMOJI={...CATEGORY_EMOJI,[name]:emoji}; setCatRows(r=>[...r.filter(x=>x.name!==name),{name,emoji}]); return true; }
     toast$(d?.message||"Couldn't save that emoji","error"); return false;
   };
@@ -1417,12 +1456,12 @@ function BiliG() {
     const to=canonTopic(raw);
     if(!to||to===from||TOPICS.some(t=>t.id===from)) return;        // built-in names stay as they are
     setCatBusy(true);
-    const moved=await sbFetch(`/phrases?topic=eq.${enc(from)}`,{method:"PATCH",headers:ah(),body:JSON.stringify({topic:to})}).catch(()=>null);
+    const moved=await sbAuth(`/phrases?topic=eq.${enc(from)}`,{method:"PATCH",body:JSON.stringify({topic:to})}).catch(()=>null);
     if(!Array.isArray(moved)){ toast$("Couldn't rename that category","error"); setCatBusy(false); return; }
     const own=catRows.find(r=>r.name===from);
     if(own){
-      if(catRows.some(r=>r.name===to)) await sbFetch(`/categories?name=eq.${enc(from)}`,{method:"DELETE",headers:ah()}).catch(()=>null);            // merged into one that exists
-      else await sbFetch(`/categories?name=eq.${enc(from)}`,{method:"PATCH",headers:ah(),body:JSON.stringify({name:to})}).catch(()=>null);
+      if(catRows.some(r=>r.name===to)) await sbAuth(`/categories?name=eq.${enc(from)}`,{method:"DELETE"}).catch(()=>null);            // merged into one that exists
+      else await sbAuth(`/categories?name=eq.${enc(from)}`,{method:"PATCH",body:JSON.stringify({name:to})}).catch(()=>null);
       setCatRows(rows=>{ const rest=rows.filter(r=>r.name!==from); return rest.some(r=>r.name===to)?rest:[...rest,{name:to,emoji:own.emoji}]; });
       const { [from]:_gone, ...keep }=CATEGORY_EMOJI; CATEGORY_EMOJI={...keep,[to]:CATEGORY_EMOJI[to]||own.emoji};
     }
@@ -1433,9 +1472,9 @@ function BiliG() {
   };
   const deleteCat = async name=>{
     setCatBusy(true);
-    const moved=await sbFetch(`/phrases?topic=eq.${enc(name)}`,{method:"PATCH",headers:ah(),body:JSON.stringify({topic:"Other"})}).catch(()=>null);
+    const moved=await sbAuth(`/phrases?topic=eq.${enc(name)}`,{method:"PATCH",body:JSON.stringify({topic:"Other"})}).catch(()=>null);
     if(!Array.isArray(moved)){ toast$("Couldn't delete that category","error"); setCatBusy(false); setCatDel(null); return; }
-    if(catRows.some(r=>r.name===name)) await sbFetch(`/categories?name=eq.${enc(name)}`,{method:"DELETE",headers:ah()}).catch(()=>null);
+    if(catRows.some(r=>r.name===name)) await sbAuth(`/categories?name=eq.${enc(name)}`,{method:"DELETE"}).catch(()=>null);
     setPhrases(ps=>ps.map(x=>x.topic===name?{...x,topic:"Other"}:x));
     setCatRows(rows=>rows.filter(r=>r.name!==name));
     const { [name]:_gone, ...keep }=CATEGORY_EMOJI; CATEGORY_EMOJI=keep;
@@ -1489,7 +1528,7 @@ function BiliG() {
     let ok=false, why="";
     if(isGuest){ for(const row of body) await dbInsert(row); ok=true; }
     else{
-      const d=await sbFetch("/phrases",{method:"POST",headers:ah(),body:JSON.stringify(body)}).catch(()=>null);
+      const d=await sbAuth("/phrases",{method:"POST",body:JSON.stringify(body)}).catch(()=>null);
       if(Array.isArray(d)&&d.length){ setPhrases(prev=>[...d,...prev]); ok=true; } else why=d?.message||"No response from Supabase.";
     }
     setBulkBusy(false);
@@ -1807,11 +1846,11 @@ function BiliG() {
 
           {/* ══ HOME: word of the day, then the categories ══ */}
           {libTab==="home"&&(()=>{
-            const w=wotd, scene=sceneFor(w), bare=!!(scene||wordArt), wl=w&&getLang(w.language), ws=w&&getTopicStyle(w.topic), wt=w&&getTopic(w.topic), flip=!!(wl&&wl.rtl);   // flip: Arabic reads right to left, so the text sits on the right and the picture on the left
+            const w=wotd, art=w?wordArt[w.id]:null, scene=sceneFor(w), wl=w&&getLang(w.language), ws=w&&getTopicStyle(w.topic), wt=w&&getTopic(w.topic), flip=!!(wl&&wl.rtl);   // flip: Arabic reads right to left, so the text sits on the right and the picture on the left
             const wlen=w?(w.foreign_text||"").length:0, wsize=Math.round((isDesktop?84:54)*(wlen>28?.5:wlen>16?.68:wlen>9?.84:1));
             const tiles=topicList.filter(t=>t.id!=="All").map(t=>({...t,n:phrases.filter(x=>x.language===activeLang&&x.topic===t.id).length})).filter(t=>t.n>0);
             return (<>
-              <div style={{position:"relative",background:"#6fa8f0",border:outline(),borderRadius:22,padding:isDesktop?"30px 36px":"20px 18px 22px",overflow:"hidden",marginBottom:isDesktop?34:26,minHeight:isDesktop?300:262}}>
+              <div {...(daily.length>1?heroSwipe:{})} style={{position:"relative",background:"#6fa8f0",border:outline(),borderRadius:22,padding:isDesktop?"30px 36px":"20px 18px 22px",overflow:"hidden",marginBottom:isDesktop?34:26,minHeight:isDesktop?300:262,cursor:daily.length>1?"grab":"default",userSelect:"none"}}>
                 {w?(<>
                   <div style={{position:"relative",zIndex:2,width:flip?(isDesktop?"42%":"50%"):(isDesktop?"56%":"54%"),marginLeft:flip?"auto":0,textAlign:flip?"right":"left"}}>
                     <div style={{fontSize:11,letterSpacing:3,fontFamily:BODY,fontWeight:600,textTransform:"uppercase",color:INK}}>{kindOf(w)} of the day</div>
@@ -1821,12 +1860,15 @@ function BiliG() {
                     <div style={{display:"flex",alignItems:"center",gap:"4px 10px",flexWrap:"wrap",justifyContent:flip?"flex-end":"flex-start"}}>
                       <div style={{fontFamily:HEAD,fontWeight:800,fontSize:isDesktop?40:28,lineHeight:1.05,color:INK,overflowWrap:"anywhere"}}>{w.native_text}</div>
                       <span style={{fontSize:10.5,padding:"1px 8px",borderRadius:999,border:"1px solid rgba(22,22,26,.22)",color:"rgba(22,22,26,.62)",fontFamily:BODY,fontWeight:500,whiteSpace:"nowrap"}}>{wt.label}</span>
-                      <span style={{fontSize:10.5,padding:"1px 8px",borderRadius:999,border:"1px solid rgba(22,22,26,.22)",color:"rgba(22,22,26,.62)",fontFamily:BODY,fontWeight:500,whiteSpace:"nowrap"}}>{kindOf(w)}</span>
                     </div>
-                    <div style={{height:1,background:INK,opacity:.45,margin:isDesktop?"16px 0 14px":"12px 0 12px",marginLeft:flip?"auto":0,width:"86%"}}/>
-                    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",justifyContent:flip?"flex-end":"flex-start"}}>
-                      <button className="cth" onClick={()=>reviewWord(w)} style={{...(isDesktop?CTA:CTA_S),background:CTA_PINK,color:INK,padding:isDesktop?"13px 22px":"11px 16px",cursor:"pointer",fontFamily:BODY,fontWeight:600,fontSize:isDesktop?15:13,display:"flex",alignItems:"center",gap:8}}>Review {kindOf(w).toLowerCase()} <span aria-hidden="true">→</span></button>
-                    </div>
+                    {daily.length>1&&(
+                      <div style={{display:"flex",gap:8,marginTop:isDesktop?22:16,justifyContent:flip?"flex-end":"flex-start"}}>
+                        {daily.map((d,i)=>(
+                          <button key={d.id} onClick={()=>setDailyIdx(i)} aria-label={`Show the ${kindOf(d).toLowerCase()} of the day`} aria-current={i===dailyIdx}
+                            style={{width:i===dailyIdx?26:10,height:10,borderRadius:99,padding:0,background:i===dailyIdx?INK:"transparent",border:outline(1.5),cursor:"pointer",transition:"width .2s"}}/>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   {/* the "photo": a tilted print of an illustrated street, with the word's category as a sticker on it */}
                   <div style={{position:"absolute",[flip?"left":"right"]:isDesktop?44:-14,top:isDesktop?32:28,width:isDesktop?250:(flip?"44%":"46%"),height:isDesktop?330:"82%",zIndex:1}}>
@@ -1834,20 +1876,12 @@ function BiliG() {
                     <svg aria-hidden="true" viewBox="0 0 64 56" style={{position:"absolute",[flip?"right":"left"]:isDesktop?-58:-43,top:isDesktop?-50:-37,width:isDesktop?64:48,height:isDesktop?56:42,zIndex:2,overflow:"visible",transform:flip?"scaleX(-1)":"none"}} fill="none" strokeLinecap="round">
                       <g stroke={INK} strokeWidth="3"><path d="M45 46.5 L28 40.4"/><path d="M50.8 38.9 L38.2 20.9"/><path d="M60 36 L60 18"/></g>
                     </svg>
-                    {!bare&&<div style={{position:"absolute",[flip?"right":"left"]:-14,bottom:36,width:34,height:34,background:"#f8b5c8",zIndex:0}}/>}
-                    <div style={{position:"absolute",inset:0,background:"#fff",border:outline(),borderRadius:10,padding:7,transform:`rotate(${flip?-5:5}deg)`,boxShadow:SOFT,zIndex:1}}>
-                      {wordArt?(
-                        <div style={{width:"100%",height:"100%",borderRadius:5,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",background:`radial-gradient(circle at 50% 42%, #fff 0%, ${ws.bg} 80%)`}}>
-                          <WordArt emoji={wordArt} onFail={()=>setWordArt(null)} style={{width:"78%",height:"auto",transform:`rotate(${flip?-6:6}deg)`,filter:"url(#sticker)"}}/>
-                        </div>
-                      ):(
-                        <svg viewBox="0 0 200 280" preserveAspectRatio="xMidYMid slice" style={{width:"100%",height:"100%",display:"block",borderRadius:5}} aria-hidden="true" dangerouslySetInnerHTML={{__html:scene||CITY_SVG}}/>
-                      )}
-                    </div>
-                    {!bare&&(
-                    <div aria-hidden="true" style={{position:"absolute",[flip?"right":"left"]:isDesktop?-26:-18,bottom:isDesktop?10:6,width:isDesktop?86:64,height:isDesktop?86:64,zIndex:2,transform:`rotate(${flip?8:-8}deg)`,filter:"url(#sticker)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:isDesktop?58:42}}>
-                      {hasTopicSvg(w.topic)?<TopicArt topic={w.topic}/>:wt.icon}
-                    </div>
+                    {art?(
+                      <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",zIndex:1}}>
+                        <WordArt emoji={art} onFail={()=>setWordArt(m=>({...m,[w.id]:null}))} style={{width:"88%",height:"auto",transform:`rotate(${flip?-6:6}deg)`}}/>
+                      </div>
+                    ):(
+                      <img src={scene||CITY_SCENE} alt="" aria-hidden="true" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"contain",display:"block",zIndex:1}}/>
                     )}
                   </div>
                 </>):(
