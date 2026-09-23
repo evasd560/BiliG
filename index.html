@@ -273,6 +273,14 @@ function WordArt({ emoji, onFail, style }) {
   return <img src={OPENMOJI+names[i]+".svg"} alt="" aria-hidden="true" onError={()=>i+1<names.length?setI(i+1):onFail()} style={style}/>;
 }
 
+// A different little emoji beside the greeting each time the app is opened or returned to.
+const GREET_EMOJI = ["🍾","🍸","🍹","🍻","🥂","🥃","🥤","🧋","🧃","🍰","🧁","🍫","🍬","🍭","🍔","🍟","🥗","🍿","🌶️","🍒","🍉","❤️","🩷","🧡","💛","💚","💙","🩵","💜","🫟","💕","🎀","🫧","🇮🇳","🇰🇼","🏔️","🏝️","🛺","🛵","🛸","🐒","🦧","🐱","🦁","🦄","🐷","🐰","🐼","🐣","🐥","🦉","🐸","🐳","🦭","🐙","🌸","🌺","🌻","🌱","🌲","🌴","🍀","🍄","🌜","🌝","🌞","⭐","🌟","🌠","🌌","🌤️","🌥️","🌈","⚡","❄️","☃️","🔥","🌊","🫰","🫵","🫶","💅","🧏‍♂️","🧏‍♀️","🏃‍♀️‍➡️","🏃‍♂️‍➡️","🧑‍🩰","💃","🕺","👯","👯‍♀️","🧞‍♂️","👑"];
+const pickGreetEmoji = prev => {
+  let e = prev;
+  for(let i=0;i<8&&e===prev;i++) e = GREET_EMOJI[Math.floor(Math.random()*GREET_EMOJI.length)];
+  return e;
+};
+
 // ── Time greeting ─────────────────────────────────────────────────────────────
 function getGreeting() {
   const h = new Date().getHours();
@@ -1731,6 +1739,13 @@ function BiliG() {
 
   // ── MAIN APP ───────────────────────────────────────────────────────────────
   const greeting = getGreeting();
+  const [greetEmoji,setGreetEmoji] = useState(()=>pickGreetEmoji());
+  useEffect(()=>{
+    const roll = ()=>setGreetEmoji(pickGreetEmoji);   // a fresh one is waiting whenever the app is opened again
+    document.addEventListener("visibilitychange",roll);
+    window.addEventListener("focus",roll);
+    return ()=>{ document.removeEventListener("visibilitychange",roll); window.removeEventListener("focus",roll); };
+  },[]);
   const firstName = session.user?.email?.split("@")[0] || "";
 
   return (
@@ -1758,15 +1773,15 @@ function BiliG() {
       <div style={{...shell,position:"relative",zIndex:10,padding:isDesktop?"26px 40px 0":"18px 22px 0",display:"grid",gridTemplateColumns:isDesktop?"1fr auto 1fr":"1fr auto",alignItems:"center",gap:16}}>
         {isDesktop?(<>
           {/* Time-based greeting */}
-          <div style={{fontSize:13,color:T.muted,fontFamily:BODY,letterSpacing:"-0.2px"}}>
-            {greeting}{firstName&&<>, <span style={{color:T.inkMid,fontWeight:500}}>{firstName}</span></>} 👋
+          <div style={{fontSize:14,color:T.inkMid,fontFamily:"'DM Sans',sans-serif",fontWeight:700,letterSpacing:"-0.2px"}}>
+            {greeting}{firstName&&<>, <span style={{color:INK}}>{firstName}</span></>} <span style={{fontSize:16}}>{greetEmoji}</span>
           </div>
           <img src="logo.png" alt="BiliG" style={{height:56,width:"auto",display:"block"}}/>
         </>):(
           <div>
             <img src="logo.png" alt="BiliG" style={{height:32,width:"auto",display:"block"}}/>
-            <div style={{fontSize:11,color:T.muted,fontFamily:BODY,marginTop:3,letterSpacing:"-0.2px"}}>
-              {greeting}{firstName&&<>, <span style={{color:T.inkMid,fontWeight:500}}>{firstName}</span></>} 👋
+            <div style={{fontSize:12,color:T.inkMid,fontFamily:"'DM Sans',sans-serif",fontWeight:700,marginTop:3,letterSpacing:"-0.2px"}}>
+              {greeting}{firstName&&<>, <span style={{color:INK}}>{firstName}</span></>} <span style={{fontSize:14}}>{greetEmoji}</span>
             </div>
           </div>
         )}
@@ -1847,22 +1862,20 @@ function BiliG() {
           {/* ══ HOME: word of the day, then the categories ══ */}
           {libTab==="home"&&(()=>{
             const w=wotd, art=w?wordArt[w.id]:null, scene=sceneFor(w), wl=w&&getLang(w.language), ws=w&&getTopicStyle(w.topic), wt=w&&getTopic(w.topic), flip=!!(wl&&wl.rtl);   // flip: Arabic reads right to left, so the text sits on the right and the picture on the left
-            const wlen=w?(w.foreign_text||"").length:0, wsize=Math.round((isDesktop?84:54)*(wlen>28?.5:wlen>16?.68:wlen>9?.84:1));
+            const wlen=w?(w.foreign_text||"").length:0, wsize=Math.round((isDesktop?84:54)*(wlen>34?.38:wlen>26?.46:wlen>18?.56:wlen>12?.7:wlen>8?.84:1));
             const tiles=topicList.filter(t=>t.id!=="All").map(t=>({...t,n:phrases.filter(x=>x.language===activeLang&&x.topic===t.id).length})).filter(t=>t.n>0);
             return (<>
-              <div {...(daily.length>1?heroSwipe:{})} style={{position:"relative",background:"#6fa8f0",border:outline(),borderRadius:22,padding:isDesktop?"30px 36px":"20px 18px 22px",overflow:"hidden",marginBottom:isDesktop?34:26,minHeight:isDesktop?300:262,cursor:daily.length>1?"grab":"default",userSelect:"none"}}>
+              <div {...(daily.length>1?heroSwipe:{})} style={{position:"relative",background:"#6fa8f0",border:outline(),borderRadius:22,padding:isDesktop?"30px 36px":"20px 18px 22px",overflow:"hidden",marginBottom:isDesktop?34:26,height:isDesktop?380:340,cursor:daily.length>1?"grab":"default",userSelect:"none"}}>
                 {w?(<>
-                  <div style={{position:"relative",zIndex:2,width:flip?(isDesktop?"42%":"50%"):(isDesktop?"56%":"54%"),marginLeft:flip?"auto":0,textAlign:flip?"right":"left"}}>
+                  <div style={{position:"relative",zIndex:2,height:"100%",display:"flex",flexDirection:"column",alignItems:flip?"flex-end":"flex-start",width:flip?(isDesktop?"42%":"50%"):(isDesktop?"56%":"54%"),marginLeft:flip?"auto":0,textAlign:flip?"right":"left"}}>
                     <div style={{fontSize:11,letterSpacing:3,fontFamily:BODY,fontWeight:600,textTransform:"uppercase",color:INK}}>{kindOf(w)} of the day</div>
-                    <div dir={wl.rtl?"rtl":"ltr"} style={{fontFamily:wl.rtl?wl.font:HEAD,fontWeight:wl.rtl?700:800,fontSize:wsize,lineHeight:wl.rtl?1.4:1.1,textAlign:wl.rtl?"right":"left",width:"100%",color:INK,overflowWrap:"anywhere",marginTop:6}}>{w.foreign_text}</div>
+                    <span style={{fontSize:10.5,padding:"1px 8px",borderRadius:999,border:"1px solid rgba(22,22,26,.22)",color:"rgba(22,22,26,.62)",fontFamily:BODY,fontWeight:500,whiteSpace:"nowrap",marginTop:7}}>{wt.label}</span>
+                    <div dir={wl.rtl?"rtl":"ltr"} style={{fontFamily:wl.rtl?wl.font:HEAD,fontWeight:wl.rtl?700:800,fontSize:wsize,lineHeight:wl.rtl?1.4:1.1,textAlign:wl.rtl?"right":"left",width:"100%",color:INK,overflowWrap:"anywhere",marginTop:8,minHeight:0,overflow:"hidden"}}>{w.foreign_text}</div>
                     {w.notes&&<div style={{fontFamily:BODY,fontWeight:300,letterSpacing:".2px",fontSize:isDesktop?20:16,color:INK,marginTop:wl.rtl?0:4,textAlign:wl.rtl?"right":"left"}}>{w.notes}</div>}
                     <div style={{fontSize:12,fontFamily:BODY,color:INK,opacity:.75,marginTop:isDesktop?18:12}}>Meaning</div>
-                    <div style={{display:"flex",alignItems:"center",gap:"4px 10px",flexWrap:"wrap",justifyContent:flip?"flex-end":"flex-start"}}>
-                      <div style={{fontFamily:HEAD,fontWeight:800,fontSize:isDesktop?40:28,lineHeight:1.05,color:INK,overflowWrap:"anywhere"}}>{w.native_text}</div>
-                      <span style={{fontSize:10.5,padding:"1px 8px",borderRadius:999,border:"1px solid rgba(22,22,26,.22)",color:"rgba(22,22,26,.62)",fontFamily:BODY,fontWeight:500,whiteSpace:"nowrap"}}>{wt.label}</span>
-                    </div>
+                    <div style={{fontFamily:HEAD,fontWeight:800,fontSize:isDesktop?40:28,lineHeight:1.05,color:INK,overflowWrap:"anywhere",width:"100%"}}>{w.native_text}</div>
                     {daily.length>1&&(
-                      <div style={{display:"flex",gap:8,marginTop:isDesktop?22:16,justifyContent:flip?"flex-end":"flex-start"}}>
+                      <div style={{display:"flex",gap:8,marginTop:"auto",paddingTop:16,justifyContent:flip?"flex-end":"flex-start"}}>
                         {daily.map((d,i)=>(
                           <button key={d.id} onClick={()=>setDailyIdx(i)} aria-label={`Show the ${kindOf(d).toLowerCase()} of the day`} aria-current={i===dailyIdx}
                             style={{width:i===dailyIdx?26:10,height:10,borderRadius:99,padding:0,background:i===dailyIdx?INK:"transparent",border:outline(1.5),cursor:"pointer",transition:"width .2s"}}/>
