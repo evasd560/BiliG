@@ -798,6 +798,11 @@ const IconGear = ({size=18}) => (
     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
   </svg>
 );
+const IconFlag = ({size=16}) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M4 22V15"/><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/>
+  </svg>
+);
 const IconBolt = ({size=16}) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
@@ -818,7 +823,7 @@ function TopicArt({ topic, pad=18 }) {       // pad: room around the drawing, so
               style={{width:"100%",height:"100%",display:"block",overflow:"visible"}} dangerouslySetInnerHTML={{__html:getTopicSvg(topic)}}/>;
 }
 
-function PhraseCard({ p, onEdit, onDelete, dense=false, compact=false, classic=false, className="", style={}, ...rest }) {
+function PhraseCard({ p, onEdit, onDelete, onFlag, dense=false, compact=false, classic=false, className="", style={}, ...rest }) {
   const lang = getLang(p.language), tag = statusTag(p), tc = getTopic(p.topic), ts = getTopicStyle(p.topic);
   const acc  = p.total_reviews>0 ? Math.round((p.good_reviews/p.total_reviews)*100) : null;
   // Arabic keeps its own script face; latin phrases take the condensed poster face (ref 4).
@@ -839,9 +844,10 @@ function PhraseCard({ p, onEdit, onDelete, dense=false, compact=false, classic=f
     <button className="ib" aria-label={label} title={label} onClick={e=>{e.stopPropagation();onClick();}}
       style={{background:"transparent",border:"none",color:INK,padding:5,borderRadius:8,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{icon}</button>
   );
-  // Edit and delete: bottom right, shown when the card is hovered (always on touch screens)
-  const actions = (size,pos) => (onEdit||onDelete)?(
+  // Flag, edit and delete: bottom right, shown when the card is hovered (always on touch screens)
+  const actions = (size,pos) => (onEdit||onDelete||onFlag)?(
     <div className="card-actions" style={{display:"flex",...pos}}>
+      {onFlag&&iconBtn("Give feedback on this card",()=>onFlag(p),<IconFlag size={size-2}/>)}
       {onEdit&&iconBtn("Edit phrase",()=>onEdit(p),<IconEdit size={size}/>)}
       {onDelete&&iconBtn("Delete phrase",()=>onDelete(p.id),<IconTrash size={size}/>)}
     </div>
@@ -1030,6 +1036,8 @@ function BiliG() {
   const [ignoreAsk,    setIgnoreAsk]    = useState(null);        // "unticked" | "all": confirming that standby phrases are dropped
   const [bulkExtra,    setBulkExtra]    = useState([]);   // categories added on the review screen that no phrase uses yet
   const [catDraft,     setCatDraft]     = useState(null); // category being renamed / added: {mode:"rename"|"add"|"row", from?, key?, value}
+  const [feedback,     setFeedback]     = useState(null);        // the feedback popup: {phrase?, text} — phrase set when flagged from a card
+  const [fbBusy,       setFbBusy]       = useState(false);
   const [langOpen,     setLangOpen]     = useState(false);
   const [activeLang,   setActiveLang]   = useState("Arabic");
   // Swipe
@@ -1090,6 +1098,21 @@ function BiliG() {
     if(r.status===401){ const fresh = await refreshToken(); if(fresh) r = await send(fresh.access_token); }
     if(r.status===401){ endSession(); toast$("Your admin session ended. Sign in again to make changes.","info"); return null; }
     return r.json().catch(()=>null);
+  };
+
+  // Feedback: anyone can send it (public key); only the owner reads it, in Supabase.
+  const openFeedback = phrase => setFeedback({phrase:phrase||null,text:""});
+  const sendFeedback = async()=>{
+    const text=feedback?.text.trim(); if(!text||fbBusy) return;
+    const p=feedback.phrase;
+    setFbBusy(true);
+    const r=await fetch(`${SB_URL}/rest/v1/feedback`,{ method:"POST",
+      headers:{ apikey:SB_KEY, "Content-Type":"application/json", Prefer:"return=minimal" },
+      body:JSON.stringify({ message:text, phrase_id:p?.id!=null?String(p.id):null,
+        phrase_text:p?`${p.foreign_text} — ${p.native_text}`:null, page:p?view:"general" }) }).catch(()=>null);
+    setFbBusy(false);
+    if(r?.ok){ setFeedback(null); toast$("Thanks for the feedback! 💌"); }
+    else toast$("Couldn't send your feedback — try again","error");
   };
 
   // DB
@@ -2013,7 +2036,7 @@ function BiliG() {
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:16,alignItems:"stretch"}}>
               {filtered.map(p=>(
                 <PhraseCard key={p.id} p={p} compact className="gcard"
-                  onEdit={readOnly?undefined:openEdit} onDelete={readOnly?undefined:setDelConfirm}/>
+                  onFlag={openFeedback} onEdit={readOnly?undefined:openEdit} onDelete={readOnly?undefined:setDelConfirm}/>
               ))}
             </div>
           )}
@@ -2039,7 +2062,7 @@ function BiliG() {
                   style={{position:"absolute",inset:0,touchAction:"pan-y",cursor:"grab",userSelect:"none",WebkitUserSelect:"none",transformOrigin:"50% 110%",willChange:"transform"}}
                   onPointerDown={deckDown} onPointerMove={deckMove} onPointerUp={deckUp} onPointerCancel={deckUp}>
                   <PhraseCard p={filtered[stackIdx]} classic className={justSwiped.current?"":"stack-card"}
-                    onEdit={readOnly?undefined:openEdit} onDelete={readOnly?undefined:setDelConfirm}
+                    onFlag={openFeedback} onEdit={readOnly?undefined:openEdit} onDelete={readOnly?undefined:setDelConfirm}
                     style={{position:"absolute",inset:0,boxShadow:"0 24px 64px rgba(26,24,37,.22)"}}/>
                 </div>
               )}
@@ -2061,6 +2084,14 @@ function BiliG() {
             </div>
           )}
           </>)}
+
+          {/* General feedback, at the end of the page */}
+          <div style={{display:"flex",justifyContent:"center",marginTop:isDesktop?40:32}}>
+            <button onClick={()=>openFeedback()}
+              style={{background:"none",border:"none",color:T.muted,fontFamily:BODY,fontSize:12,cursor:"pointer",padding:"8px 12px",display:"flex",alignItems:"center",gap:6}}>
+              <IconFlag size={13}/> Send feedback
+            </button>
+          </div>
         </div>
       )}
 
@@ -2074,7 +2105,7 @@ function BiliG() {
           <div style={{width:"100%",maxWidth:isDesktop?540:460,height:3,background:T.border,borderRadius:2,marginBottom:28}}>
             <div style={{height:"100%",borderRadius:2,background:`linear-gradient(90deg,${T.lav},${T.pink})`,width:`${((cardIndex+1)/cardDeck.length)*100}%`,transition:"width .4s ease"}}/>
           </div>
-          <div className="flip-wrap" style={{width:"100%",maxWidth:isDesktop?540:460,height:isDesktop?330:275,cursor:"pointer"}} onClick={handleFlip}>
+          <div className="flip-wrap" style={{width:"100%",maxWidth:isDesktop?540:460,height:isDesktop?330:275,cursor:"pointer",position:"relative"}} onClick={handleFlip}>
             <div className={`flip-inner${flipped?" on":""}`} style={{width:"100%",height:"100%"}}>
               <div className="face" style={{position:"absolute",width:"100%",height:"100%",background:getTopicStyle(fcard?.topic).bg,border:outline(2.5),borderRadius:24,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,boxSizing:"border-box",boxShadow:drop(6,6)}}>
                 <div style={{fontFamily:SERIF,fontStyle:"italic",fontSize:15,color:"rgba(22,22,26,.62)",marginBottom:18}}>{fcard?getTopic(fcard.topic).label:""}</div>
@@ -2088,6 +2119,12 @@ function BiliG() {
                 {fcard?.notes&&<div style={{marginTop:14,fontSize:15,color:T.inkMid,fontFamily:BODY,fontWeight:300,textAlign:"center",lineHeight:1.4}}>{fcard.notes}</div>}
               </div>
             </div>
+            {/* feedback flag — above both faces, so it doesn't flip with the card */}
+            <button className="ib" aria-label="Give feedback on this card" title="Give feedback on this card"
+              onClick={e=>{e.stopPropagation();openFeedback(fcard);}}
+              style={{position:"absolute",top:12,right:12,zIndex:5,transform:"translateZ(1px)",background:"transparent",border:"none",color:"rgba(22,22,26,.55)",padding:6,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <IconFlag size={15}/>
+            </button>
           </div>
           <div style={{marginTop:24,width:"100%",maxWidth:isDesktop?540:460,opacity:showRating?1:0,transform:showRating?"translateY(0)":"translateY(8px)",transition:"all .3s ease",pointerEvents:showRating?"auto":"none"}}>
             <div style={{fontSize:9,color:T.muted,fontFamily:HEAD,letterSpacing:2,textAlign:"center",marginBottom:10,textTransform:"uppercase"}}>How did you do?</div>
@@ -2695,6 +2732,31 @@ function BiliG() {
           </div>
         );
       })()}
+
+      {/* Feedback — general, or about one card when flagged from it */}
+      {feedback&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.35)",zIndex:120,display:"flex",alignItems:"center",justifyContent:"center",padding:24}} onClick={()=>!fbBusy&&setFeedback(null)}>
+          <form onSubmit={e=>{e.preventDefault();sendFeedback();}} onClick={e=>e.stopPropagation()}
+            style={{background:T.surface,border:outline(2.5),borderRadius:24,padding:"26px 24px",width:"100%",maxWidth:380,boxShadow:drop(6,6),display:"flex",flexDirection:"column",gap:14,animation:"pop .2s ease"}}>
+            <div>
+              <div style={{fontSize:9,letterSpacing:4,color:T.lav,fontFamily:HEAD,textTransform:"uppercase",marginBottom:5,display:"flex",alignItems:"center",gap:6}}><IconFlag size={11}/> Feedback</div>
+              <div style={{fontSize:20,fontWeight:800,fontFamily:HEAD,color:INK,letterSpacing:"-.6px"}}>{feedback.phrase?"Something off with this card?":"How's BiliG working for you?"}</div>
+              {feedback.phrase&&(
+                <div style={{marginTop:8,fontSize:13,color:T.inkMid,fontFamily:BODY,background:T.surfaceHi,border:`1px solid ${T.border}`,borderRadius:10,padding:"8px 11px"}}>
+                  <span dir="auto" style={{fontWeight:700,color:INK}}>{feedback.phrase.foreign_text}</span> — {feedback.phrase.native_text}
+                </div>
+              )}
+            </div>
+            <textarea value={feedback.text} onChange={e=>setFeedback(f=>({...f,text:e.target.value}))} autoFocus rows={4} maxLength={2000}
+              placeholder={feedback.phrase?"A wrong translation, a typo, a better way to say it…":"Ideas, bugs, anything you'd like to see…"}
+              style={{...iSt,resize:"vertical",minHeight:96,lineHeight:1.45}}/>
+            <div style={{display:"flex",gap:10}}>
+              <button type="submit" disabled={fbBusy||!feedback.text.trim()} style={{flex:1,background:INK,border:outline(),borderRadius:14,color:"#fff",fontFamily:HEAD,fontWeight:800,fontSize:14,padding:"13px",cursor:"pointer",boxShadow:drop(3,3),opacity:fbBusy||!feedback.text.trim()?.5:1}}>{fbBusy?"Sending…":"Send"}</button>
+              <button type="button" onClick={()=>setFeedback(null)} disabled={fbBusy} style={{background:"transparent",border:`1px solid ${T.borderMid}`,borderRadius:14,color:T.muted,fontFamily:BODY,fontSize:14,padding:"13px 16px",cursor:"pointer"}}>Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Delete modal */}
       {delConfirm&&(
