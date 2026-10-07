@@ -2775,7 +2775,57 @@ function BiliG() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<BiliG/>);
+// ── When something breaks ─────────────────────────────────────────────────────
+// Errors used to be silent: a crash left a blank page and nothing was recorded.
+// Now the app says so, and the error is posted to the client_errors table, which
+// anyone may write to and nobody may read back (see the migration).
+const ERR_MAX = 5;                 // per page load, so a loop cannot flood the table
+let errSent = 0;
+const errSeen = new Set();
+function reportError(kind, err, extra={}) {
+  try{
+    const message = String((err && err.message) || err || "Unknown error").slice(0,500);
+    const key = kind+"|"+message;
+    if(errSent>=ERR_MAX || errSeen.has(key)) return;    // one of each, and only a few
+    errSeen.add(key); errSent++;
+    fetch(`${SB_URL}/rest/v1/client_errors`,{
+      method:"POST",
+      headers:{ apikey:SB_KEY, Authorization:`Bearer ${SB_KEY}`, "Content-Type":"application/json", Prefer:"return=minimal" },
+      body:JSON.stringify({ kind, message,
+        stack:String((err && err.stack) || "").slice(0,4000) || null,
+        page:String(location.href).slice(0,300),
+        user_agent:String(navigator.userAgent).slice(0,300), ...extra }),
+    }).catch(()=>{});                                   // reporting must never cause a second error
+  }catch{}
+}
+window.addEventListener("error", e=>reportError("error", e.error||e.message));
+window.addEventListener("unhandledrejection", e=>reportError("unhandledrejection", e.reason));
+
+class ErrorBoundary extends React.Component {
+  constructor(props){ super(props); this.state={ failed:false }; }
+  static getDerivedStateFromError(){ return { failed:true }; }
+  componentDidCatch(err, info){ reportError("render", err, { stack:String(err&&err.stack||info?.componentStack||"").slice(0,4000)||null }); }
+  render(){
+    if(!this.state.failed) return this.props.children;
+    return (
+      <div style={{minHeight:"100vh",background:T.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+        <div style={{background:T.surface,border:`3px solid ${INK}`,borderRadius:22,boxShadow:`5px 5px 0 ${INK}`,padding:"30px 28px",maxWidth:420,textAlign:"center"}}>
+          <div style={{fontSize:40,marginBottom:12}}>🫠</div>
+          <div style={{fontFamily:HEAD,fontWeight:800,fontSize:26,color:INK,letterSpacing:"-.3px"}}>Something went wrong</div>
+          <div style={{fontFamily:"'DM Sans',sans-serif",fontSize:14,color:T.inkMid,marginTop:10,lineHeight:1.5}}>
+            The page hit a problem and stopped. Reloading usually sorts it — your phrases are safe.
+          </div>
+          <button onClick={()=>location.reload()}
+            style={{...CTA,background:CTA_PINK,color:INK,fontFamily:HEAD,fontWeight:700,fontSize:16,padding:"13px 26px",marginTop:22,cursor:"pointer"}}>
+            Reload
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<ErrorBoundary><BiliG/></ErrorBoundary>);
 </script>
 </body>
 </html>
