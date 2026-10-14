@@ -34,12 +34,12 @@ const VIEWER_SESSION = { viewer:true, user:{ id:"viewer", email:"" } };
 const PROGRESS_KEY = "bilig_viewer_progress";
 const progressRead  = () => { try{ const v=JSON.parse(localStorage.getItem(PROGRESS_KEY)); return v&&typeof v==="object"?v:{}; }catch{ return {}; } };
 const progressWrite = o => { try{ localStorage.setItem(PROGRESS_KEY,JSON.stringify(o)); }catch{} };
-// Landing from a password-recovery email: Supabase puts the tokens after the # in the address.
-// A dead or expired link comes back as #error=…&error_description=…
+// Landing from a password-recovery or magic-link email: Supabase puts the tokens after the # in the address.
+// Either one can set a new password; a magic link can also just sign in. A dead or expired link comes back as #error=…&error_description=…
 const readRecovery = () => { try{
   const h=new URLSearchParams(location.hash.replace(/^#/,""));
   if(h.get("error")||h.get("error_code")) return { error:h.get("error_description")||"That link didn't work." };
-  if(h.get("type")==="recovery"&&h.get("access_token")) return { token:h.get("access_token"), refresh:h.get("refresh_token"), expires_in:Number(h.get("expires_in"))||3600 };
+  if(["recovery","magiclink"].includes(h.get("type"))&&h.get("access_token")) return { type:h.get("type"), token:h.get("access_token"), refresh:h.get("refresh_token"), expires_in:Number(h.get("expires_in"))||3600 };
 }catch{}
   return null; };
 const clearHash = () => { try{ history.replaceState(null,"",location.pathname+location.search); }catch{} };
@@ -58,7 +58,27 @@ const sbFetch = (path, opts={}) => fetch(`${SB_URL}/rest/v1${path}`, {
 }).then(r=>r.json());
 const authFetch = (path,body) => fetch(`${SB_URL}/auth/v1${path}`,{
   method:"POST", headers:{apikey:SB_KEY,"Content-Type":"application/json"},
-  body:JSON.stringify(body)}).then(r=>r.json());
+  body:JSON.stringify(body)}).then(r=>r.json()).catch(()=>({error:"network"}));   // offline: an error like any other, never a hang
+// A Supabase error turned into something the user can act on. Unknown ones keep Supabase's own words in brackets.
+const NET_ERR = "Couldn't reach the server. Check your internet connection and try again.";
+const friendlyError = (d,fallback) => {
+  const m=String(d?.msg||d?.message||d?.error_description||d?.error||"");
+  if(!m) return fallback;
+  if(/network|failed to fetch|load failed/i.test(m)) return NET_ERR;
+  if(/rate limit/i.test(m)) return "Too many emails were sent in a short time. Wait about an hour, then try again.";
+  if(/invalid login credentials/i.test(m)) return "That email and password don't match.";
+  if(/email not confirmed/i.test(m)) return "This email hasn't been confirmed yet. Open the link in the confirmation email first.";
+  if(/different from the old password/i.test(m)) return "Choose a password that's different from your old one.";
+  if(/password should be/i.test(m)) return m;
+  if(/jwt|token.*(expired|invalid)/i.test(m)) return "Your admin session ended. Sign in again, then try once more.";
+  if(/row-level security|permission denied/i.test(m)) return "Only the admin can change this. Sign in again, then try once more.";
+  if(/duplicate key|already exists/i.test(m)) return "That one already exists.";
+  return `${fallback} (${m})`;
+};
+// On the set-a-new-password screen, a token Supabase rejects means the email link is used up or too old.
+const linkError = (d,fallback) => /jwt|token|expired|session.*(missing|not found)/i.test(String(d?.msg||d?.message||d?.error_description||d?.error||""))
+  ? "This link has expired or was already used. Go back, tap Add phrase, choose \"Forgot password?\" and request a new one."
+  : friendlyError(d,fallback);
 
 // ── Guest mode (device-local storage, no account) ─────────────────────────────
 const GUEST_KEY  = "bilig_guest_phrases";
@@ -969,6 +989,7 @@ function BiliG() {
   const [newPw2,      setNewPw2]      = useState("");
   const [recBusy,     setRecBusy]     = useState(false);
   const [recError,    setRecError]    = useState("");
+  const [formBusy,    setFormBusy]    = useState(false);   // the add/edit form is saving
   const [authView,    setAuthView]    = useState("login");
   const [authEmail,   setAuthEmail]   = useState("");
   const [authPw,      setAuthPw]      = useState("");
@@ -1062,7 +1083,7 @@ function BiliG() {
     return ()=>window.removeEventListener("keydown",h);
   },[view,deckMode]);
 
-  const toast$ = (msg,type="success")=>{ clearTimeout(toastRef.current); setToast({msg,type}); toastRef.current=setTimeout(()=>setToast(null),3200); };
+  const toast$ = (msg,type="success")=>{ clearTimeout(toastRef.current); setToast({msg,type}); toastRef.current=setTimeout(()=>setToast(null),type==="error"?7000:3200); };   // errors stay up long enough to read
   // The live session, readable from inside a request without waiting for a re-render.
   const sessionRef = useRef(session);
   useEffect(()=>{ sessionRef.current=session; },[session]);
@@ -1093,10 +1114,11 @@ function BiliG() {
     if(s?.refresh_token && (!s.expires_at_ms || s.expires_at_ms-Date.now() < 60000)) s = (await refreshToken()) || s;
     const send = tok => fetch(`${SB_URL}/rest/v1${path}`,{ ...opts,
       headers:{ apikey:SB_KEY, "Content-Type":"application/json", Prefer:"return=representation",
-                Authorization:`Bearer ${tok}`, ...opts.headers } });
+                Authorization:`Bearer ${tok}`, ...opts.headers } }).catch(()=>null);
     let r = await send(s?.access_token);
-    if(r.status===401){ const fresh = await refreshToken(); if(fresh) r = await send(fresh.access_token); }
-    if(r.status===401){ endSession(); toast$("Your admin session ended. Sign in again to make changes.","info"); return null; }
+    if(r?.status===401){ const fresh = await refreshToken(); if(fresh) r = await send(fresh.access_token); }
+    if(!r) return { message:"network" };
+    if(r.status===401){ endSession(); toast$("Your admin session ended. Sign in again to make changes.","info"); return { message:"JWT expired" }; }
     return r.json().catch(()=>null);
   };
 
@@ -1121,7 +1143,7 @@ function BiliG() {
       setDbLoading(true);
       const data=await sbFetch("/phrases?order=created_at.desc&limit=1000").catch(()=>null);
       if(Array.isArray(data)){ const prog=progressRead(); setPhrases(data.map(r=>({...r,...(prog[r.id]||{})}))); }
-      else toast$("Could not load the phrases","error");
+      else toast$("Couldn't load the phrases. Check your internet connection, then refresh the page.","error");
       setDbLoading(false); return;
     }
     if(isGuest){
@@ -1134,7 +1156,7 @@ function BiliG() {
     const data=await sbAuth("/phrases?order=created_at.desc");
     if(Array.isArray(data)) setPhrases(data);
     else if(data?.code==="PGRST303"||/jwt/i.test(data?.message||"")) await renewSession();
-    else toast$("Could not load — check Supabase table","error");
+    else toast$(friendlyError(data,"Couldn't load your phrases. Refresh the page to try again."),"error");
     setDbLoading(false);
   };
   const loadCategories = async()=>{
@@ -1143,10 +1165,13 @@ function BiliG() {
     else setCatsReady(false);                        // no table yet: emoji fall back to the automatic ones
   };
   useEffect(()=>{ loadCategories(); },[]);
+  // Returns {ok:true}, or {ok:false, why} with a message for the user.
   const dbInsert = async row=>{
-    if(readOnly) return;
-    if(isGuest){ const r={...row,id:newLocalId(),created_at:new Date().toISOString()}; setPhrases(p=>{const n=[r,...p];guestWrite(n);return n;}); return; }
-    const d=await sbAuth("/phrases",{method:"POST",body:JSON.stringify(row)}); if(Array.isArray(d)&&d[0])setPhrases(p=>[d[0],...p]); else toast$("Save failed","error"); };
+    if(readOnly) return { ok:false, why:"Sign in as the admin to add phrases." };
+    if(isGuest){ const r={...row,id:newLocalId(),created_at:new Date().toISOString()}; setPhrases(p=>{const n=[r,...p];guestWrite(n);return n;}); return { ok:true }; }
+    const d=await sbAuth("/phrases",{method:"POST",body:JSON.stringify(row)});
+    if(Array.isArray(d)&&d[0]){ setPhrases(p=>[d[0],...p]); return { ok:true }; }
+    return { ok:false, why:friendlyError(d,"Supabase didn't save it.") }; };
   const dbUpdate = async(id,patch)=>{
     if(readOnly){ const o=progressRead(); o[id]={...o[id],...patch}; progressWrite(o); setPhrases(p=>p.map(x=>x.id===id?{...x,...patch}:x)); return true; }
     if(isGuest){ setPhrases(p=>{const n=p.map(x=>x.id===id?{...x,...patch}:x);guestWrite(n);return n;}); return true; }
@@ -1167,7 +1192,7 @@ function BiliG() {
     const res=await authFetch(authView==="login"?"/token?grant_type=password":"/signup",{email:authEmail,password:authPw});
     if(res.access_token) setSession({access_token:res.access_token,refresh_token:res.refresh_token,expires_at_ms:Date.now()+(res.expires_in||3600)*1000,user:res.user});
     else if(authView==="signup"&&res.id) setAuthSuccess("Check your email to confirm, then log in.");
-    else setAuthError(res.error_description||res.msg||"Something went wrong");
+    else setAuthError(friendlyError(res,"Couldn't sign you in. Try again."));
     setAuthLoading(false);
   };
   const submitRecovery = async e=>{
@@ -1177,20 +1202,30 @@ function BiliG() {
     setRecBusy(true); setRecError("");
     const r=await fetch(`${SB_URL}/auth/v1/user`,{ method:"PUT",
       headers:{ apikey:SB_KEY, Authorization:`Bearer ${recovery.token}`, "Content-Type":"application/json" },
-      body:JSON.stringify({ password:newPw }) }).then(x=>x.json()).catch(()=>({}));
+      body:JSON.stringify({ password:newPw }) }).then(x=>x.json()).catch(()=>({error:"network"}));
     if(r.id){                                        // updated: carry straight on, signed in
       clearHash(); setNewPw(""); setNewPw2("");
       setSession({ access_token:recovery.token, refresh_token:recovery.refresh, expires_at_ms:Date.now()+recovery.expires_in*1000, user:r });
       setRecovery(null); toast$("Password updated. You're signed in ✓");
-    }else setRecError(r.msg||r.error_description||r.message||"Couldn't update the password. The link may have expired: request a new one.");
+    }else setRecError(linkError(r,"Couldn't update the password. The link may have expired: request a new one."));
     setRecBusy(false);
+  };
+  // A magic link can also just sign in, leaving the password as it is.
+  const skipRecovery = async()=>{
+    setRecBusy(true); setRecError("");
+    const u=await fetch(`${SB_URL}/auth/v1/user`,{ headers:{ apikey:SB_KEY, Authorization:`Bearer ${recovery.token}` } }).then(x=>x.json()).catch(()=>({error:"network"}));
+    setRecBusy(false);
+    if(!u?.id){ setRecError(linkError(u,"Couldn't sign you in. The link may have expired: request a new one.")); return; }
+    clearHash(); setNewPw(""); setNewPw2("");
+    setSession({ access_token:recovery.token, refresh_token:recovery.refresh, expires_at_ms:Date.now()+recovery.expires_in*1000, user:u });
+    setRecovery(null); toast$("You're signed in ✓");
   };
   const sendRecovery = async()=>{
     if(!authEmail.trim()){ setAuthError("Type your email above first."); return; }
     setAuthLoading(true); setAuthError(""); setAuthSuccess("");
     const back=location.protocol==="file:"?"":`?redirect_to=${encodeURIComponent(location.origin+location.pathname)}`;   // must be in Supabase's allowed redirect list
-    const res=await authFetch(`/recover${back}`,{email:authEmail.trim()}).catch(()=>({error:"network"}));
-    if(res&&(res.error||res.msg||res.error_code)) setAuthError(res.msg||res.error_description||"Couldn't send the email. Try again in a minute.");
+    const res=await authFetch(`/recover${back}`,{email:authEmail.trim()});
+    if(res&&(res.error||res.msg||res.error_code)) setAuthError(friendlyError(res,"Couldn't send the email. Try again in a minute."));
     else setAuthSuccess("If that email has an account, a reset link is on its way.");
     setAuthLoading(false);
   };
@@ -1198,7 +1233,11 @@ function BiliG() {
     setSeeding(true);
     const rows=buildStarters(session?.user?.id||"guest");
     if(isGuest) setPhrases(prev=>{ const n=[...rows,...prev]; guestWrite(n); return n; });
-    else for(const {id,created_at,...row} of rows) await dbInsert(row);
+    else{
+      let added=0, why="";
+      for(const {id,created_at,...row} of rows){ const r=await dbInsert(row); if(r.ok) added++; else why=r.why; }
+      if(added<rows.length){ setSeeding(false); toast$(`${added} of ${rows.length} starter phrases added. ${why}`,"error"); return; }
+    }
     setActiveLang("Arabic"); setTopicFilter("All"); setStackIdx(0);
     toast$("5 starter phrases added ✓"); setSeeding(false);
   };
@@ -1321,20 +1360,32 @@ function BiliG() {
     if(Array.isArray(d)&&d.length){
       setPhrases(prev=>[...d,...prev]); try{localStorage.setItem(IMPORTED_KEY,"1");}catch{}
       setDeviceCount(0); toast$(`${d.length} phrase${d.length>1?"s":""} added to the shared library ✓`);
-    }else toast$(`Couldn't add them — nothing was changed. ${d?.message||d?.msg||"No response from Supabase."}`,"error");
+    }else toast$(`Couldn't add them — nothing was changed. ${friendlyError(d,"No response from Supabase.")}`,"error");
     setDeviceBusy(false);
   };
   const askAdmin = (intent="add")=>{ setLoginFor(intent); setAuthView("login"); setAuthError(""); setAuthSuccess(""); setAuthPw(""); setLoginOpen(true); };
   const tryAdd   = ()=>readOnly?askAdmin():openAdd();
   useEffect(()=>{ if(!readOnly&&loginOpen){ setLoginOpen(false); if(loginFor==="settings") openSettings(); else if(deviceImported()||!deviceRowsToImport().length) openAdd(); } },[readOnly]);
   const openEdit = p =>{ if(readOnly)return; setEditPhrase(p); setForm({foreign_text:p.foreign_text,native_text:p.native_text,language:p.language,topic:p.topic,notes:p.notes||""}); setImgPreview(null); setView("form"); };
+  // On failure the form stays open with what was typed, so nothing is lost.
   const saveForm = async()=>{
+    if(formBusy) return;
     if(!form.foreign_text.trim()||!form.native_text.trim()){toast$("Both fields are required","error");return;}
-    if(editPhrase){ const ok=await dbUpdate(editPhrase.id,{foreign_text:form.foreign_text,native_text:form.native_text,language:form.language,topic:form.topic,notes:form.notes}); if(!ok){ toast$("Couldn't save that change","error"); return; } toast$("Updated ✓"); }
-    else{ await dbInsert({...form,date:todayStr(),srs_reps:0,srs_interval:1,srs_next_review:null,total_reviews:0,good_reviews:0,user_id:session.user?.id}); toast$("Phrase saved ✓"); }
+    setFormBusy(true);
+    if(editPhrase){
+      const ok=await dbUpdate(editPhrase.id,{foreign_text:form.foreign_text,native_text:form.native_text,language:form.language,topic:form.topic,notes:form.notes});
+      setFormBusy(false);
+      if(!ok){ toast$("Couldn't save that change. Check your connection, or sign in again, then try once more.","error"); return; }
+      toast$("Updated ✓");
+    }else{
+      const r=await dbInsert({...form,date:todayStr(),srs_reps:0,srs_interval:1,srs_next_review:null,total_reviews:0,good_reviews:0,user_id:session.user?.id});
+      setFormBusy(false);
+      if(!r.ok){ toast$(`Couldn't save the phrase. ${r.why}`,"error"); return; }
+      toast$("Phrase saved ✓");
+    }
     setView("library");
   };
-  const deletePhrase = async id=>{ const ok=await dbDelete(id); setDelConfirm(null); if(ok) toast$("Deleted","info"); else toast$("Couldn't delete that phrase","error"); };
+  const deletePhrase = async id=>{ const ok=await dbDelete(id); setDelConfirm(null); if(ok) toast$("Deleted","info"); else toast$("Couldn't delete that phrase. Check your connection, or sign in again, then try once more.","error"); };
 
   // SRS
   const startPractice = mode=>{
@@ -1351,7 +1402,7 @@ function BiliG() {
     const p=cardDeck[cardIndex], review=practiceMode==="due";
     const first=!review||!reviewRead().seen.includes(p.id);          // a word asked again later in the session doesn't move its schedule twice
     const patch=first?calcNextReview(p,rating):null;
-    if(patch&&!(await dbUpdate(p.id,patch))) toast$("Couldn't save your progress","error");
+    if(patch&&!(await dbUpdate(p.id,patch))) toast$("Couldn't save your progress on this card. Check your internet connection.","error");
     let deck=patch?cardDeck.map(c=>c.id===p.id?{...c,...patch}:c):cardDeck, next=cardIndex+1, over=next>=deck.length, day=null;
     if(review){ const r=reviewAfter(reviewRead(),deck,cardIndex,rating); reviewWrite(r.day); deck=r.deck; next=r.next; over=r.over; day=r.day; }
     setCardDeck(deck); setFlipped(false); setShowRating(false);
@@ -1419,13 +1470,19 @@ function BiliG() {
   const saveScan = async()=>{
     if(!keptRows.length){ toast$("Nothing selected","error"); return; }
     setScanBusy(true);
+    const failed=new Set(); let why="";
     for(const r of keptRows){
-      await dbInsert({
+      const res=await dbInsert({
         foreign_text:r.foreign_text.trim(), native_text:r.native_text.trim(),
         language:r.language, topic:r.topic, notes:(r.notes||"").trim(),
         date:todayStr(), srs_reps:0, srs_interval:1, srs_next_review:null,
         total_reviews:0, good_reviews:0, user_id:session.user?.id,
       });
+      if(!res.ok){ failed.add(r.key); why=res.why; }
+    }
+    if(failed.size){                                 // keep the ones that didn't save on screen, to try again
+      setScanRows(rows=>rows.filter(r=>failed.has(r.key))); setScanBusy(false);
+      toast$(`${keptRows.length-failed.size} added, ${failed.size} couldn't be saved. ${why}`,"error"); return;
     }
     const n=keptRows.length;
     setActiveLang(keptRows[0].language); setTopicFilter("All"); setStackIdx(0);
@@ -1487,7 +1544,7 @@ function BiliG() {
     if(!catsReady){ toast$("Saving an emoji needs the one-time database update first","error"); return false; }
     const d=await sbAuth("/categories",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=representation"},body:JSON.stringify({name,emoji,user_id:session.user.id})}).catch(()=>null);
     if(Array.isArray(d)&&d.length){ CATEGORY_EMOJI={...CATEGORY_EMOJI,[name]:emoji}; setCatRows(r=>[...r.filter(x=>x.name!==name),{name,emoji}]); return true; }
-    toast$(d?.message||"Couldn't save that emoji","error"); return false;
+    toast$(friendlyError(d,"Couldn't save that emoji."),"error"); return false;
   };
   const pickEmoji = async(name,emoji)=>{ setEmojiFor(null); if(await saveCatEmoji(name,emoji)) toast$(`${emoji} saved`); };
   const renameCat = async(from,raw)=>{
@@ -1496,7 +1553,7 @@ function BiliG() {
     if(!to||to===from||TOPICS.some(t=>t.id===from)) return;        // built-in names stay as they are
     setCatBusy(true);
     const moved=await sbAuth(`/phrases?topic=eq.${enc(from)}`,{method:"PATCH",body:JSON.stringify({topic:to})}).catch(()=>null);
-    if(!Array.isArray(moved)){ toast$("Couldn't rename that category","error"); setCatBusy(false); return; }
+    if(!Array.isArray(moved)){ toast$(friendlyError(moved,"Couldn't rename that category."),"error"); setCatBusy(false); return; }
     const own=catRows.find(r=>r.name===from);
     if(own){
       if(catRows.some(r=>r.name===to)) await sbAuth(`/categories?name=eq.${enc(from)}`,{method:"DELETE"}).catch(()=>null);            // merged into one that exists
@@ -1512,7 +1569,7 @@ function BiliG() {
   const deleteCat = async name=>{
     setCatBusy(true);
     const moved=await sbAuth(`/phrases?topic=eq.${enc(name)}`,{method:"PATCH",body:JSON.stringify({topic:"Other"})}).catch(()=>null);
-    if(!Array.isArray(moved)){ toast$("Couldn't delete that category","error"); setCatBusy(false); setCatDel(null); return; }
+    if(!Array.isArray(moved)){ toast$(friendlyError(moved,"Couldn't delete that category."),"error"); setCatBusy(false); setCatDel(null); return; }
     if(catRows.some(r=>r.name===name)) await sbAuth(`/categories?name=eq.${enc(name)}`,{method:"DELETE"}).catch(()=>null);
     setPhrases(ps=>ps.map(x=>x.topic===name?{...x,topic:"Other"}:x));
     setCatRows(rows=>rows.filter(r=>r.name!==name));
@@ -1568,7 +1625,7 @@ function BiliG() {
     if(isGuest){ for(const row of body) await dbInsert(row); ok=true; }
     else{
       const d=await sbAuth("/phrases",{method:"POST",body:JSON.stringify(body)}).catch(()=>null);
-      if(Array.isArray(d)&&d.length){ setPhrases(prev=>[...d,...prev]); ok=true; } else why=d?.message||"No response from Supabase.";
+      if(Array.isArray(d)&&d.length){ setPhrases(prev=>[...d,...prev]); ok=true; } else why=friendlyError(d,"No response from Supabase.");
     }
     setBulkBusy(false);
     if(!ok){ toast$(`Couldn't add them — nothing was changed. ${why}`,"error"); return; }
@@ -1608,7 +1665,7 @@ function BiliG() {
     const results=await Promise.all(manageDirty.map(p=>dbUpdate(p.id,manageChanged(p))));
     const failed=manageDirty.filter((p,i)=>!results[i]);
     setManageEdits(Object.fromEntries(failed.map(p=>[p.id,manageEdits[p.id]])));   // keep the edits that didn't save
-    if(failed.length) toast$(`${manageDirty.length-failed.length} saved, ${failed.length} couldn't be saved. Try signing in again.`,"error");
+    if(failed.length) toast$(`${manageDirty.length-failed.length} saved, ${failed.length} couldn't be saved. Check your connection, or sign in again, then save once more.`,"error");
     else toast$(`${manageDirty.length} phrase${manageDirty.length>1?"s":""} updated ✓`);
     setManageBusy(false);
   };
@@ -1621,7 +1678,7 @@ function BiliG() {
     setManageSel(new Set(ids.filter(id=>!gone.has(id))));
     setManageEdits(e=>Object.fromEntries(Object.entries(e).filter(([id])=>!gone.has(id))));
     setManageDel(false); setManageBusy(false);
-    if(failed) toast$(`${gone.size} deleted, ${failed} couldn't be deleted`,"error"); else toast$(`${gone.size} phrase${gone.size>1?"s":""} deleted`,"info");
+    if(failed) toast$(`${gone.size} deleted, ${failed} couldn't be deleted. Check your connection, or sign in again, then try once more.`,"error"); else toast$(`${gone.size} phrase${gone.size>1?"s":""} deleted`,"info");
   };
 
   // Deck swipe: the top card follows the finger (or mouse), tilting as it goes, with the neighbouring card coming up
@@ -1723,6 +1780,7 @@ function BiliG() {
             <div><label style={lSt}>Type it again</label><input type="password" value={newPw2} onChange={e=>setNewPw2(e.target.value)} placeholder="••••••••" required style={iSt}/></div>
             {recError&&<div style={{fontSize:12,color:"#dc2626",background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:10,padding:"9px 12px"}}>{recError}</div>}
             <button type="submit" disabled={recBusy} style={{background:INK,border:outline(),borderRadius:14,color:"#fff",fontFamily:HEAD,fontWeight:800,fontSize:14,padding:14,cursor:"pointer",boxShadow:drop(3,3),opacity:recBusy?.6:1}}>{recBusy?"Saving…":"Save and sign in →"}</button>
+            {recovery.type==="magiclink"&&<button type="button" onClick={skipRecovery} disabled={recBusy} style={{background:"none",border:"none",color:T.lav,fontFamily:BODY,fontSize:12,fontWeight:600,cursor:"pointer",padding:0}}>Keep my password and just sign in</button>}
           </form>
         )}
       </div>
@@ -1787,7 +1845,7 @@ function BiliG() {
       <input ref={camRef}  type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{startScan(e.target.files[0]);e.target.value="";}}/>
       <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{startScan(e.target.files[0]);e.target.value="";}}/>
 
-      {toast&&<div style={{position:"fixed",top:18,left:"50%",transform:"translateX(-50%)",background:toast.type==="error"?"#fee2e2":toast.type==="info"?"#ede9ff":"#f0fdf4",color:toast.type==="error"?"#991b1b":toast.type==="info"?T.lav:"#166534",padding:"9px 20px",borderRadius:30,zIndex:999,fontSize:13,fontFamily:BODY,boxShadow:"0 4px 24px rgba(0,0,0,.1)",animation:"fadeDown .25s ease",whiteSpace:"nowrap",border:`1px solid ${toast.type==="error"?"#fca5a5":toast.type==="info"?T.lavBorder:"#86efac"}`}}>{toast.msg}</div>}
+      {toast&&<div role={toast.type==="error"?"alert":"status"} onClick={()=>setToast(null)} style={{position:"fixed",top:18,left:"50%",transform:"translateX(-50%)",maxWidth:"calc(100vw - 32px)",width:"max-content",textAlign:"center",lineHeight:1.45,cursor:"pointer",background:toast.type==="error"?"#fee2e2":toast.type==="info"?"#ede9ff":"#f0fdf4",color:toast.type==="error"?"#991b1b":toast.type==="info"?T.lav:"#166534",padding:"9px 20px",borderRadius:30,zIndex:999,fontSize:13,fontFamily:BODY,boxShadow:"0 4px 24px rgba(0,0,0,.1)",animation:"fadeDown .25s ease",border:`1px solid ${toast.type==="error"?"#fca5a5":toast.type==="info"?T.lavBorder:"#86efac"}`}}>{toast.msg}</div>}
 
       {/* ── Reminder: phrases waiting on standby ── */}
       {!readOnly&&view==="library"&&bulkRows.length>0&&(<>
@@ -2328,7 +2386,7 @@ function BiliG() {
           </div>
 
           <div style={{display:"flex",gap:10}}>
-            <button onClick={saveForm} style={{flex:1,background:T.dark,border:"none",borderRadius:14,color:"#fff",fontFamily:HEAD,fontWeight:700,fontSize:14,padding:"14px",cursor:"pointer",boxShadow:"0 6px 20px rgba(26,24,37,.25)"}}>{editPhrase?"Save Changes":"Add Phrase"}</button>
+            <button onClick={saveForm} disabled={formBusy} style={{flex:1,background:T.dark,border:"none",borderRadius:14,color:"#fff",fontFamily:HEAD,fontWeight:700,fontSize:14,padding:"14px",cursor:"pointer",boxShadow:"0 6px 20px rgba(26,24,37,.25)",opacity:formBusy?.6:1}}>{formBusy?"Saving…":editPhrase?"Save Changes":"Add Phrase"}</button>
             <button onClick={()=>setView("library")} style={{background:T.surface,border:`1px solid ${T.borderMid}`,borderRadius:14,color:T.muted,fontFamily:BODY,fontSize:14,padding:"14px 18px",cursor:"pointer"}}>Cancel</button>
           </div>
         </div>
