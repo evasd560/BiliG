@@ -1257,9 +1257,17 @@ function BiliG() {
 
   // The word of the day: a new one each day (from local midnight), rotating through the phrases in this language.
   // Only ones with a transliteration are used, so the card always has one (any phrase if none have).
+  const dayNum = ()=>Math.floor((Date.now()-new Date().getTimezoneOffset()*6e4)/864e5);   // whole days since 1970, counted in the user's timezone
+  const [day,setDay] = useState(dayNum);
+  // An app left open, or brought back from the background, moves on to the new day's picks.
+  useEffect(()=>{
+    const tick=()=>setDay(dayNum());
+    const t=setInterval(tick,60000);
+    document.addEventListener("visibilitychange",tick); window.addEventListener("focus",tick);
+    return ()=>{ clearInterval(t); document.removeEventListener("visibilitychange",tick); window.removeEventListener("focus",tick); };
+  },[]);
   const daily = useMemo(()=>{
     const inLang=phrases.filter(p=>p.language===activeLang);
-    const day=Math.floor((Date.now()-new Date().getTimezoneOffset()*6e4)/864e5);      // whole days since 1970, counted in the user's timezone
     const pick=kind=>{
       const ofKind=inLang.filter(p=>kindOf(p)===kind);
       const withTr=ofKind.filter(p=>String(p.notes||"").trim());                      // prefer ones that have a transliteration
@@ -1267,7 +1275,7 @@ function BiliG() {
       return pool.length?pool[day%pool.length]:null;
     };
     return [pick("Word"),pick("Phrase")].filter(Boolean);                             // word first, then phrase
-  },[phrases,activeLang]);
+  },[phrases,activeLang,day]);
   const [dailyIdx,setDailyIdx] = useState(0);                                         // which of the two is showing
   useEffect(()=>{ setDailyIdx(0); },[activeLang]);
   const wotd = daily[Math.min(dailyIdx,daily.length-1)] || null;
