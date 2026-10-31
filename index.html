@@ -505,6 +505,20 @@ const TOPIC_SVGS = {
 const CITY_SCENE = "img/city.svg";
 const WORD_SCENES = [ { re:/\b(garden|gardener|gardening)\b/i, src:"img/garden.svg" } ];
 const sceneFor = p => { const m=String(p&&p.native_text||""); const hit=WORD_SCENES.find(x=>x.re.test(m)); return hit?hit.src:null; };
+// Words about people get a hand-drawn ink bust from Open Peeps (Pablo Stanley, CC0), shown as a tinted print.
+const WORD_PEOPLE = [
+  { re:/\b(mother|mum|mom)\b/i,                 src:"img/peeps/peep-72.svg" },
+  { re:/\b(father|dad)\b/i,                     src:"img/peeps/peep-43.svg" },
+  { re:/\bbrothers?\b/i,                        src:"img/peeps/peep-47.svg" },
+  { re:/\bsisters?\b/i,                         src:"img/peeps/peep-89.svg" },
+  { re:/\bfriends?\b/i,                         src:"img/peeps/peep-52.svg" },
+  { re:/\bengineers?\b/i,                       src:"img/peeps/peep-8.svg"  },
+  { re:/\bdentists?\b/i,                        src:"img/peeps/peep-101.svg" },
+  { re:/\bemployers?\b/i,                       src:"img/peeps/peep-99.svg" },
+  { re:/\bsingers?\b/i,                         src:"img/peeps/peep-60.svg" },
+  { re:/\bbusiness ?(person|people|man|woman)\b/i, src:"img/peeps/peep-92.svg" },
+];
+const personFor = p => { const m=String(p&&p.native_text||""); const hit=WORD_PEOPLE.find(x=>x.re.test(m)); return hit?hit.src:null; };
 
 // Glossy 3D icons for the stat tiles
 const STAT_PALETTE = {
@@ -1295,7 +1309,7 @@ function BiliG() {
   }),[phrases, activeLang, topicFilter, kindFilter]);
 
   // The word of the day: a new one each day (from local midnight), rotating through the phrases in this language.
-  // Only ones with a transliteration are used, so the card always has one (any phrase if none have).
+  // Every one of that kind takes its turn, with or without a transliteration (the card leaves that line out when there isn't one).
   const dayNum = ()=>Math.floor((Date.now()-new Date().getTimezoneOffset()*6e4)/864e5);   // whole days since 1970, counted in the user's timezone
   const [day,setDay] = useState(dayNum);
   // An app left open, or brought back from the background, moves on to the new day's picks.
@@ -1309,8 +1323,7 @@ function BiliG() {
     const inLang=phrases.filter(p=>p.language===activeLang);
     const pick=kind=>{
       const ofKind=inLang.filter(p=>kindOf(p)===kind);
-      const withTr=ofKind.filter(p=>String(p.notes||"").trim());                      // prefer ones that have a transliteration
-      const pool=(withTr.length?withTr:ofKind).sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+      const pool=ofKind.sort((a,b)=>String(a.id).localeCompare(String(b.id)));
       return pool.length?pool[day%pool.length]:null;
     };
     return [pick("Word"),pick("Phrase")].filter(Boolean);                             // word first, then phrase
@@ -1324,7 +1337,7 @@ function BiliG() {
   useEffect(()=>{
     let dead=false;
     daily.forEach(p=>{
-      if(sceneFor(p)||artAsked.current.has(p.id)) return;
+      if(sceneFor(p)||personFor(p)||artAsked.current.has(p.id)) return;
       artAsked.current.add(p.id);
       findWordEmoji(p).then(e=>{ if(!dead) setWordArt(m=>({...m,[p.id]:e})); });
     });
@@ -1960,7 +1973,7 @@ function BiliG() {
 
           {/* ══ HOME: word of the day, then the categories ══ */}
           {libTab==="home"&&(()=>{
-            const w=wotd, art=w?wordArt[w.id]:null, scene=sceneFor(w), wl=w&&getLang(w.language), ws=w&&getTopicStyle(w.topic), wt=w&&getTopic(w.topic), flip=!!(wl&&wl.rtl);   // flip: Arabic reads right to left, so the text sits on the right and the picture on the left
+            const w=wotd, scene=sceneFor(w), person=!scene&&personFor(w), art=w&&!scene&&!person?wordArt[w.id]:null, wl=w&&getLang(w.language), ws=w&&getTopicStyle(w.topic), wt=w&&getTopic(w.topic), flip=!!(wl&&wl.rtl);   // flip: Arabic reads right to left, so the text sits on the right and the picture on the left
             const wlen=w?(w.foreign_text||"").length:0, wsize=Math.round((isDesktop?84:54)*(wlen>34?.38:wlen>26?.46:wlen>18?.56:wlen>12?.7:wlen>8?.84:1));
             const tiles=topicList.filter(t=>t.id!=="All").map(t=>({...t,n:phrases.filter(x=>x.language===activeLang&&x.topic===t.id).length})).filter(t=>t.n>0);
             return (<>
@@ -1982,13 +1995,19 @@ function BiliG() {
                       </div>
                     )}
                   </div>
+                  {/* admin: edit this word or phrase, in the corner below the picture */}
+                  {!readOnly&&(
+                    <button type="button" onClick={e=>{ e.stopPropagation(); openEdit(w); }} onMouseDown={e=>e.stopPropagation()} onTouchStart={e=>e.stopPropagation()}
+                      aria-label={`Edit this ${kindOf(w).toLowerCase()}`} title={`Edit this ${kindOf(w).toLowerCase()}`}
+                      style={{position:"absolute",[flip?"left":"right"]:isDesktop?16:12,bottom:isDesktop?16:12,zIndex:3,width:34,height:34,borderRadius:"50%",background:T.surface,border:outline(1.5),color:INK,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",boxShadow:drop(2,2),padding:0}}><IconEdit size={15}/></button>
+                  )}
                   {/* the "photo": a tilted print of an illustrated street, with the word's category as a sticker on it */}
                   <div style={{position:"absolute",[flip?"left":"right"]:isDesktop?44:-14,top:isDesktop?32:28,width:isDesktop?250:(flip?"44%":"46%"),height:isDesktop?330:"82%",zIndex:1}}>
-                    {/* a fan of three plain ink lines off the photo's corner */}
-                    <svg aria-hidden="true" viewBox="0 0 64 56" style={{position:"absolute",[flip?"right":"left"]:isDesktop?-58:-43,top:isDesktop?-50:-37,width:isDesktop?64:48,height:isDesktop?56:42,zIndex:2,overflow:"visible",transform:flip?"scaleX(-1)":"none"}} fill="none" strokeLinecap="round">
-                      <g stroke={INK} strokeWidth="3"><path d="M45 46.5 L28 40.4"/><path d="M50.8 38.9 L38.2 20.9"/><path d="M60 36 L60 18"/></g>
-                    </svg>
-                    {art?(
+                    {person?(
+                      <div style={{position:"absolute",inset:isDesktop?"4% 6% 8%":"6% 4% 10%",background:ws.bg,border:outline(),borderRadius:6,boxShadow:drop(4,4),overflow:"hidden",transform:`rotate(${flip?-4:4}deg)`,zIndex:1}}>
+                        <img src={person} alt="" aria-hidden="true" style={{position:"absolute",left:0,right:0,bottom:0,width:"100%",height:"92%",objectFit:"contain",objectPosition:"center bottom",display:"block"}}/>
+                      </div>
+                    ):art?(
                       <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",zIndex:1}}>
                         <WordArt emoji={art} onFail={()=>setWordArt(m=>({...m,[w.id]:null}))} style={{width:"88%",height:"auto",transform:`rotate(${flip?-6:6}deg)`}}/>
                       </div>
@@ -2005,7 +2024,9 @@ function BiliG() {
                 )}
               </div>
 
-              {w&&wordArt&&<div style={{fontSize:10,color:T.muted,fontFamily:BODY,textAlign:"right",margin:isDesktop?"-24px 4px 22px":"-18px 4px 16px"}}>Picture: <a href="https://openmoji.org" target="_blank" rel="noopener" style={{color:"inherit"}}>OpenMoji</a> · CC BY-SA 4.0</div>}
+              {(art||person)&&<div style={{fontSize:10,color:T.muted,fontFamily:BODY,textAlign:"right",margin:isDesktop?"-24px 4px 22px":"-18px 4px 16px"}}>{person
+                ?<>Picture: <a href="https://www.openpeeps.com" target="_blank" rel="noopener" style={{color:"inherit"}}>Open Peeps</a> by Pablo Stanley · CC0</>
+                :<>Picture: <a href="https://openmoji.org" target="_blank" rel="noopener" style={{color:"inherit"}}>OpenMoji</a> · CC BY-SA 4.0</>}</div>}
               {tiles.length>0&&(<>
                 <div style={{fontFamily:HEAD,fontWeight:800,fontSize:isDesktop?34:30,letterSpacing:"-.4px",color:INK,margin:"0 0 14px"}}>Explore by category</div>
                 <div style={{display:"grid",gridTemplateColumns:isDesktop?"repeat(3,1fr)":"repeat(2,1fr)",gap:isDesktop?18:12}}>
