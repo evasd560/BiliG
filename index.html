@@ -5,7 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
   <title>biliG — Language Diary</title>
   <link rel="icon" type="image/png" href="favicon.png"/>
-  <link rel="apple-touch-icon" href="favicon.png"/>
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png"/>
+  <!-- Installable app (PWA): home-screen icon, full-screen window, offline copy -->
+  <link rel="manifest" href="manifest.json"/>
+  <meta name="theme-color" content="#f5f4f0"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-title" content="BiliG"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=Scheherazade+New:wght@400;700&family=Anton&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet"/>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -19,6 +26,10 @@
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="sticker" x="-25%" y="-25%" width="150%" height="150%"><feMorphology in="SourceAlpha" operator="dilate" radius="4" result="d"/><feFlood flood-color="#fff"/><feComposite in2="d" operator="in" result="w"/><feGaussianBlur in="w" stdDeviation="2.2" result="b"/><feOffset in="b" dy="2.5" result="sh"/><feFlood flood-color="#16161a" flood-opacity=".22"/><feComposite in2="sh" operator="in" result="shadow"/><feMerge><feMergeNode in="shadow"/><feMergeNode in="w"/><feMergeNode in="SourceGraphic"/></feMerge></filter></svg>
 <div id="root"></div>
+<script>
+  // The service worker makes the app installable and lets it open offline. It needs http(s): opening the file directly skips it.
+  if("serviceWorker" in navigator && location.protocol.startsWith("http")) addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+</script>
 <script type="text/babel">
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
@@ -505,18 +516,18 @@ const TOPIC_SVGS = {
 const CITY_SCENE = "img/city.svg";
 const WORD_SCENES = [ { re:/\b(garden|gardener|gardening)\b/i, src:"img/garden.svg" } ];
 const sceneFor = p => { const m=String(p&&p.native_text||""); const hit=WORD_SCENES.find(x=>x.re.test(m)); return hit?hit.src:null; };
-// Words about people get a hand-drawn ink bust from Open Peeps (Pablo Stanley, CC0), shown as a tinted print.
+// Words about people get a black-ink illustration from Pictographic (credited at the end of the page), shown as a tinted print.
 const WORD_PEOPLE = [
-  { re:/\b(mother|mum|mom)\b/i,                 src:"img/peeps/peep-72.svg" },
-  { re:/\b(father|dad)\b/i,                     src:"img/peeps/peep-43.svg" },
-  { re:/\bbrothers?\b/i,                        src:"img/peeps/peep-47.svg" },
-  { re:/\bsisters?\b/i,                         src:"img/peeps/peep-89.svg" },
-  { re:/\bfriends?\b/i,                         src:"img/peeps/peep-52.svg" },
-  { re:/\bengineers?\b/i,                       src:"img/peeps/peep-8.svg"  },
-  { re:/\bdentists?\b/i,                        src:"img/peeps/peep-101.svg" },
-  { re:/\bemployers?\b/i,                       src:"img/peeps/peep-99.svg" },
-  { re:/\bsingers?\b/i,                         src:"img/peeps/peep-60.svg" },
-  { re:/\bbusiness ?(person|people|man|woman)\b/i, src:"img/peeps/peep-92.svg" },
+  { re:/\b(mother|mum|mom)\b/i,                 src:"img/people/mother.png" },
+  { re:/\b(father|dad)\b/i,                     src:"img/people/father.png" },
+  { re:/\bbrothers?\b/i,                        src:"img/people/brother.png" },
+  { re:/\bsisters?\b/i,                         src:"img/people/sister.png" },
+  { re:/\bfriends?\b/i,                         src:"img/people/friend.png" },
+  { re:/\bengineers?\b/i,                       src:"img/people/engineer.png"  },
+  { re:/\bdentists?\b/i,                        src:"img/people/dentist.png" },
+  { re:/\bemployers?\b/i,                       src:"img/people/employer.png" },
+  { re:/\bsingers?\b/i,                         src:"img/people/singer.png" },
+  { re:/\bbusiness ?(person|people|man|woman)\b/i, src:"img/people/business-person.png" },
 ];
 const personFor = p => { const m=String(p&&p.native_text||""); const hit=WORD_PEOPLE.find(x=>x.re.test(m)); return hit?hit.src:null; };
 
@@ -857,6 +868,14 @@ function TopicArt({ topic, pad=18 }) {       // pad: room around the drawing, so
               style={{width:"100%",height:"100%",display:"block",overflow:"visible"}} dangerouslySetInnerHTML={{__html:getTopicSvg(topic)}}/>;
 }
 
+// A person's illustration as a small tilted print: the line art has see-through faces and clothes, so it needs a light card behind it.
+function PersonPrint({ src, size, tilt=5, style={} }) {
+  return (
+    <div aria-hidden="true" style={{width:size,height:size,flexShrink:0,background:"#fdfaf3",border:outline(2),borderRadius:8,boxShadow:drop(3,3),overflow:"hidden",transform:`rotate(${tilt}deg)`,position:"relative",...style}}>
+      <img src={src} alt="" style={{position:"absolute",left:0,right:0,bottom:0,width:"100%",height:"94%",objectFit:"contain",objectPosition:"center bottom",display:"block"}}/>
+    </div>
+  );
+}
 function PhraseCard({ p, onEdit, onDelete, onFlag, dense=false, compact=false, classic=false, className="", style={}, ...rest }) {
   const lang = getLang(p.language), tag = statusTag(p), tc = getTopic(p.topic), ts = getTopicStyle(p.topic);
   const acc  = p.total_reviews>0 ? Math.round((p.good_reviews/p.total_reviews)*100) : null;
@@ -865,7 +884,9 @@ function PhraseCard({ p, onEdit, onDelete, onFlag, dense=false, compact=false, c
   const len      = (p.foreign_text||"").length;
   const shrink   = len>34 ? .52 : len>22 ? .64 : len>12 ? .78 : 1;
   const artSide  = lang.rtl ? "left" : "right";   // opposite the reading edge
-  const emojiArt = !hasTopicSvg(p.topic);
+  const person   = personFor(p);                  // on the big flashcard, words about people show their own illustration instead of the category's
+  const topicEmoji = !hasTopicSvg(p.topic);       // the grid cards always keep the category's picture
+  const emojiArt = !person&&topicEmoji;
   const tilt     = lang.rtl ? -9 : 9;
 
   // The category, beside the translation
@@ -896,7 +917,7 @@ function PhraseCard({ p, onEdit, onDelete, onFlag, dense=false, compact=false, c
       <div className={`pcard ${className}`}
         style={{borderRadius:18,overflow:"hidden",background:T.surface,userSelect:"none",border:outline(2.5),display:"flex",flexDirection:"column",height:"100%",...style}} {...rest}>
         <div style={{background:ts.bg,padding:"10px 12px",display:"flex",alignItems:"center",gap:10,flexDirection:lang.rtl?"row":"row-reverse",minHeight:78}}>
-          {emojiArt?(
+          {topicEmoji?(
             <div aria-hidden="true" style={{width:62,height:62,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:44,lineHeight:1,transform:`rotate(${tilt}deg)`,filter:"url(#sticker)"}}>{tc.icon}</div>
           ):(
             <div style={{width:62,height:62,flexShrink:0,transform:`rotate(${lang.rtl?-5:5}deg)`,filter:"url(#sticker)"}}><TopicArt topic={p.topic}/></div>
@@ -955,8 +976,10 @@ function PhraseCard({ p, onEdit, onDelete, onFlag, dense=false, compact=false, c
           </div>
         </div>
 
-        {/* the picture: the illustration (or the category's emoji) as a tilted sticker, no box around it */}
-        {emojiArt?(
+        {/* the picture: the person, the category's illustration, or its emoji, as a tilted sticker, no box around it */}
+        {person?(
+          <PersonPrint src={person} size={artW} tilt={lang.rtl?-5:5} style={{position:"absolute",bottom:dense?10:14,[artSide]:dense?12:18,zIndex:2}}/>
+        ):emojiArt?(
           <div aria-hidden="true" style={{position:"absolute",bottom:dense?8:12,[artSide]:dense?14:20,zIndex:2,fontSize:Math.round(artW*.82),lineHeight:1,
                        transform:`rotate(${tilt}deg)`,filter:"url(#sticker)"}}>{tc.icon}</div>
         ):(
@@ -1427,6 +1450,7 @@ function BiliG() {
   };
   deckLen.current = filtered.length;
   const fcard=cardDeck[cardIndex], fcardLang=fcard?getLang(fcard.language):null, fcardTag=fcard?statusTag(fcard):null;
+  const fcardPerson=fcard?personFor(fcard):null, fcardArtW=isDesktop?96:76;
   const formLang=getLang(form.language);
 
   // ── Scan a photo → review → save ──
@@ -1852,9 +1876,17 @@ function BiliG() {
 
   // ── MAIN APP ───────────────────────────────────────────────────────────────
   const greeting = getGreeting();
-  // Away from home, the greeting's spot holds the way back instead.
-  const goHome = ()=>view==="scan"?cancelScan():setView("library");
-  const backHome = sz=>(
+  // Away from home (another page, or a category's cards), the greeting's spot holds the way back instead.
+  const awayFromHome = view!=="library"||libTab==="cards";
+  const goHome = ()=>{
+    if(view==="scan") cancelScan(); else setView("library");
+    setLibTab("home"); setTopicFilter("All"); setKindFilter("All");                // always the home page, never a category's cards
+  };
+  // Review and the category cards get a plain text link (tertiary); the other pages keep the outlined button.
+  const backHome = sz=>(view==="flashcard"||view==="library")?(
+    <button type="button" onClick={goHome}
+      style={{background:"none",border:"none",padding:"6px 0",color:INK,fontFamily:BODY,fontWeight:600,fontSize:sz+1,cursor:"pointer",width:"fit-content"}}>{isDesktop?"← Back Home":"← Back home"}</button>
+  ):(
     <button type="button" onClick={goHome}
       style={{background:T.surface,border:outline(),borderRadius:30,padding:"7px 14px",color:INK,fontFamily:BODY,fontWeight:600,fontSize:sz,cursor:"pointer",boxShadow:drop(2,2),width:"fit-content"}}>← Back to home</button>
   );
@@ -1885,14 +1917,14 @@ function BiliG() {
       <div style={{...shell,position:"relative",zIndex:10,padding:isDesktop?"26px 40px 0":"18px 22px 0",display:"grid",gridTemplateColumns:isDesktop?"1fr auto 1fr":"1fr auto",alignItems:"center",gap:16}}>
         {isDesktop?(<>
           {/* Time-based greeting */}
-          {view!=="library"?<div>{backHome(13)}</div>:<div style={{fontSize:14,color:T.inkMid,fontFamily:"'DM Sans',sans-serif",fontWeight:700,letterSpacing:"-0.2px"}}>
+          {awayFromHome?<div>{backHome(13)}</div>:<div style={{fontSize:14,color:T.inkMid,fontFamily:"'DM Sans',sans-serif",fontWeight:700,letterSpacing:"-0.2px"}}>
             {greeting}{firstName&&<>, <span style={{color:INK}}>{firstName}</span></>} <span style={{fontSize:16}}>{greetEmoji}</span>
           </div>}
           <img src="logo.png" alt="BiliG" style={{height:56,width:"auto",display:"block"}}/>
         </>):(
           <div>
             <img src="logo.png" alt="BiliG" style={{height:32,width:"auto",display:"block"}}/>
-            {view!=="library"?<div style={{marginTop:6}}>{backHome(12)}</div>:<div style={{fontSize:12,color:T.inkMid,fontFamily:"'DM Sans',sans-serif",fontWeight:700,marginTop:3,letterSpacing:"-0.2px"}}>
+            {awayFromHome?<div style={{marginTop:6}}>{backHome(12)}</div>:<div style={{fontSize:12,color:T.inkMid,fontFamily:"'DM Sans',sans-serif",fontWeight:700,marginTop:3,letterSpacing:"-0.2px"}}>
               {greeting}{firstName&&<>, <span style={{color:INK}}>{firstName}</span></>} <span style={{fontSize:14}}>{greetEmoji}</span>
             </div>}
           </div>
@@ -1903,11 +1935,19 @@ function BiliG() {
         <button onClick={()=>readOnly?askAdmin("settings"):openSettings()} aria-label="Settings" title="Settings"
           style={{width:38,height:38,borderRadius:"50%",background:T.surface,border:outline(),color:INK,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",boxShadow:drop(3,3),flexShrink:0}}><IconGear size={18}/></button>
         <div ref={langRef} style={{position:"relative"}}>
+          {/* On phones only the flag shows (a round button like Settings); the names are in the dropdown */}
+          {isDesktop?(
           <button onClick={()=>setLangOpen(o=>!o)} style={{background:T.surface,border:outline(),borderRadius:30,padding:"8px 16px 8px 12px",color:INK,fontFamily:BODY,fontWeight:600,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",gap:7,boxShadow:drop(3,3)}}>
             <span style={{fontSize:14}}>{getLang(activeLang).flag}</span>
             <span style={{color:T.ink,fontWeight:500,fontSize:12}}>{activeLang}</span>
             <span style={{fontSize:8,color:T.muted}}>{langOpen?"▲":"▼"}</span>
           </button>
+          ):(
+          <button onClick={()=>setLangOpen(o=>!o)} aria-label={`Language: ${activeLang}`} aria-expanded={langOpen} title={activeLang}
+            style={{width:38,height:38,borderRadius:"50%",background:T.surface,border:outline(),display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",boxShadow:drop(3,3),flexShrink:0,padding:0}}>
+            <span style={{fontSize:18,lineHeight:1}}>{getLang(activeLang).flag}</span>
+          </button>
+          )}
           {langOpen&&(
             <div style={{position:"absolute",right:0,top:"calc(100% + 10px)",background:T.surface,border:outline(),borderRadius:16,padding:"6px",minWidth:172,zIndex:200,boxShadow:drop(4,4),animation:"pop .15s ease"}}>
               {LANGUAGES.map(l=>(
@@ -2024,9 +2064,6 @@ function BiliG() {
                 )}
               </div>
 
-              {(art||person)&&<div style={{fontSize:10,color:T.muted,fontFamily:BODY,textAlign:"right",margin:isDesktop?"-24px 4px 22px":"-18px 4px 16px"}}>{person
-                ?<>Picture: <a href="https://www.openpeeps.com" target="_blank" rel="noopener" style={{color:"inherit"}}>Open Peeps</a> by Pablo Stanley · CC0</>
-                :<>Picture: <a href="https://openmoji.org" target="_blank" rel="noopener" style={{color:"inherit"}}>OpenMoji</a> · CC BY-SA 4.0</>}</div>}
               {tiles.length>0&&(<>
                 <div style={{fontFamily:HEAD,fontWeight:800,fontSize:isDesktop?34:30,letterSpacing:"-.4px",color:INK,margin:"0 0 14px"}}>Explore by category</div>
                 <div style={{display:"grid",gridTemplateColumns:isDesktop?"repeat(3,1fr)":"repeat(2,1fr)",gap:isDesktop?18:12}}>
@@ -2057,8 +2094,6 @@ function BiliG() {
 
           {/* ══ FLASHCARD MODE: the card library ══ */}
           {libTab==="cards"&&(<>
-          <button onClick={()=>{ setLibTab("home"); setTopicFilter("All"); setKindFilter("All"); }}
-            style={{background:"none",border:"none",color:T.inkMid,fontFamily:BODY,fontWeight:600,fontSize:13,cursor:"pointer",padding:"0 0 12px",display:"flex",alignItems:"center",gap:6}}>← Home</button>
           {/* Topic filter chips — one tight row that scrolls sideways */}
           <div style={{marginBottom:isDesktop?16:20}}>
             <div className="tsc" style={{display:"flex",gap:5,paddingBottom:isDesktop?6:2,flexWrap:"nowrap",overflowX:"auto",justifyContent:"flex-start",scrollbarWidth:isDesktop?"thin":"none"}}>
@@ -2067,7 +2102,7 @@ function BiliG() {
                 const count=t.id==="All"?phrases.filter(p=>p.language===activeLang).length:(phrases.filter(p=>p.language===activeLang&&p.topic===t.id).length);
                 return (
                   <div key={t.id} className="ph" onClick={()=>setTopicFilter(t.id)}
-                    style={{flexShrink:0,display:"flex",alignItems:"center",gap:isDesktop?5:4,padding:isDesktop?"7px 11px":"6px 10px",borderRadius:30,background:t.id==="All"?(active?INK:"transparent"):getTopicStyle(t.id).bg,border:`${active?1.8:1}px solid ${t.id==="All"&&!active?T.borderMid:INK}`,transition:"all .15s"}}>
+                    style={{flexShrink:0,display:"flex",alignItems:"center",gap:isDesktop?5:4,padding:isDesktop?"7px 11px":"6px 10px",borderRadius:30,background:t.id==="All"?(active?INK:"transparent"):getTopicStyle(t.id).bg,border:`${active?1.8:1}px solid ${active?INK:T.borderMid}`,transition:"all .15s"}}>
                     <span style={{fontSize:isDesktop?14:11,lineHeight:1,opacity:active?1:.8}}>{t.icon}</span>
                     <span style={{fontSize:isDesktop?13:11,fontFamily:BODY,fontWeight:active?700:500,color:active&&t.id==="All"?"#fff":INK,whiteSpace:"nowrap"}}>{t.label}</span>
                     <span style={{fontSize:isDesktop?10:7,color:active&&t.id==="All"?"rgba(255,255,255,.6)":T.inkMid,marginLeft:isDesktop?2:1,fontFamily:BODY}}>{count}</span>
@@ -2189,6 +2224,10 @@ function BiliG() {
               <IconFlag size={13}/> Send feedback
             </button>
           </div>
+          {/* Picture credits, at the very end */}
+          <div style={{textAlign:"center",fontSize:10,color:T.muted,fontFamily:BODY,lineHeight:1.6,padding:"4px 16px 0"}}>
+            Pictures: <a href="https://pictographic.ai" target="_blank" rel="noopener" style={{color:"inherit"}}>Pictographic</a> · <a href="https://openmoji.org" target="_blank" rel="noopener" style={{color:"inherit"}}>OpenMoji</a> (CC BY-SA 4.0)
+          </div>
         </div>
       )}
 
@@ -2209,6 +2248,11 @@ function BiliG() {
                 <div dir={fcardLang?.rtl?"rtl":"ltr"} style={{fontSize:fcardLang?.rtl?54:40,fontFamily:fcardLang?.rtl?fcardLang?.font:DISPLAY,textAlign:"center",lineHeight:fcardLang?.rtl?1.35:1,width:"100%",color:INK,fontWeight:fcardLang?.rtl?700:400}}>{fcard?.foreign_text}</div>
                 {fcardTag&&<div style={{marginTop:20,fontSize:11,padding:"4px 14px",borderRadius:20,background:fcardTag.color,color:INK,fontFamily:HEAD,fontWeight:800,letterSpacing:.5,textTransform:"uppercase",border:outline(2),boxShadow:drop(2,2)}}>{fcardTag.label}</div>}
                 <div style={{marginTop:24,fontSize:10,color:"rgba(22,22,26,.5)",fontFamily:BODY}}>tap to reveal</div>
+                {/* the picture, in the corner opposite the reading edge, like the cards in the library */}
+                {fcard&&(()=>{ const side=fcardLang?.rtl?"left":"right", tilt=fcardLang?.rtl?-5:5, pos={position:"absolute",bottom:16,[side]:18,zIndex:2};
+                  return fcardPerson?<PersonPrint src={fcardPerson} size={fcardArtW} tilt={tilt} style={pos}/>
+                    :hasTopicSvg(fcard.topic)?<div aria-hidden="true" style={{...pos,width:fcardArtW,height:fcardArtW,transform:`rotate(${tilt}deg)`,filter:"url(#sticker)"}}><TopicArt topic={fcard.topic}/></div>
+                    :<div aria-hidden="true" style={{...pos,fontSize:Math.round(fcardArtW*.7),lineHeight:1,transform:`rotate(${tilt*1.8}deg)`,filter:"url(#sticker)"}}>{getTopic(fcard.topic).icon}</div>; })()}
               </div>
               <div className="face face-b" style={{position:"absolute",width:"100%",height:"100%",background:T.surface,border:outline(2.5),borderRadius:24,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,boxSizing:"border-box",boxShadow:drop(6,6)}}>
                 <div style={{fontSize:9,letterSpacing:2.5,color:T.muted,fontFamily:HEAD,fontWeight:700,textTransform:"uppercase",marginBottom:14}}>Meaning</div>
@@ -2225,12 +2269,13 @@ function BiliG() {
           </div>
           <div style={{marginTop:24,width:"100%",maxWidth:isDesktop?540:460,opacity:showRating?1:0,transform:showRating?"translateY(0)":"translateY(8px)",transition:"all .3s ease",pointerEvents:showRating?"auto":"none"}}>
             <div style={{fontSize:9,color:T.muted,fontFamily:HEAD,letterSpacing:2,textAlign:"center",marginBottom:10,textTransform:"uppercase"}}>How did you do?</div>
-            <div style={{display:"flex",gap:8}}>
-              {[{label:"Again",emoji:"😓",rating:0,color:"#dc2626",bg:"#fee2e2",bc:"#fca5a5",sub:"Tomorrow"},{label:"Good",emoji:"🙂",rating:1,color:"#ea580c",bg:"#fff7ed",bc:"#fdba74",sub:"Few days"},{label:"Easy",emoji:"🚀",rating:2,color:"#16a34a",bg:"#f0fdf4",bc:"#86efac",sub:"10+ days"}].map(({label,emoji,rating,color,bg,bc,sub})=>(
-                <button key={rating} className="rb" onClick={()=>handleRating(rating)} style={{flex:1,background:bg,border:outline(),borderRadius:16,padding:"13px 6px",display:"flex",flexDirection:"column",alignItems:"center",gap:4,boxShadow:drop(3,3),cursor:"pointer"}}>
-                  <span style={{fontSize:20}}>{emoji}</span>
-                  <span style={{fontSize:12,fontFamily:HEAD,fontWeight:700,color}}>{label}</span>
-                  <span style={{fontSize:9,fontFamily:BODY,color:T.muted}}>{sub}</span>
+            <div style={{display:"flex",gap:isDesktop?14:10}}>
+              {[{label:"Not yet",emoji:"😓",rating:0,bg:"#f9b8b0",sub:"Tomorrow"},{label:"Got it",emoji:"🙂",rating:1,bg:"#ffd97a",sub:"Few days"},{label:"Easy!",emoji:"🚀",rating:2,bg:"#a9e4b5",sub:"10+ days"}].map(({label,emoji,rating,bg,sub})=>(
+                <button key={rating} className="cth" onClick={()=>handleRating(rating)}
+                  style={{...(isDesktop?CTA:CTA_S),flex:1,background:bg,color:INK,padding:isDesktop?"14px 8px 12px":"12px 6px 10px",display:"flex",flexDirection:"column",alignItems:"center",gap:3,cursor:"pointer"}}>
+                  <span style={{fontSize:isDesktop?24:22,lineHeight:1}}>{emoji}</span>
+                  <span style={{fontSize:isDesktop?17:15,fontFamily:HEAD,fontWeight:800,letterSpacing:"-.2px",marginTop:2}}>{label}</span>
+                  <span style={{fontSize:10,fontFamily:BODY,fontWeight:500,color:"rgba(22,22,26,.65)"}}>{sub}</span>
                 </button>
               ))}
             </div>
