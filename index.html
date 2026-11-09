@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-title" content="BiliG"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
-  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=Scheherazade+New:wght@400;700&family=Anton&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=Scheherazade+New:wght@400;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet"/>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
@@ -128,7 +128,7 @@ const outline = (w=STROKE)=>`${Math.max(1,+(w*LINE).toFixed(2))}px solid ${INK}`
 const drop    = ()=>"none";                                  // no offset shadows: a flat, line-art look
 const SOFT    = "0 3px 10px rgba(22,22,26,.13)";             // the one soft shadow (stickers, lifted cards)
 const HEAD    = "'Barlow Condensed','Archivo Narrow',sans-serif";   // headings, numbers, buttons
-const BODY    = BODY;                      // everything else
+const BODY    = "'DM Sans',sans-serif";    // everything else (set on buttons and inputs too: they don't inherit the page's font)
 const DISPLAY = HEAD;
 // Main call-to-action buttons (Review word, Review, Practice, Add phrase): a thick ink border and a hard shadow down and to the right
 const CTA   = { border:`3px solid ${INK}`, boxShadow:`5px 5px 0 ${INK}`, borderRadius:18 };
@@ -180,13 +180,55 @@ function emojiHue(emoji){
 // A card colour that complements the emoji: the opposite side of the colour wheel, dark enough for white text.
 const complement = h => { const c=Math.round((h+180)%360); return { bg:`hsl(${c},68%,84%)`, fg:INK, deep:`hsl(${c},58%,42%)`, a:`hsl(${c},70%,86%)`, b:`hsl(${c},70%,68%)`, c:`hsl(${c},60%,34%)` }; };
 const _cardStyle = new Map();
+const nameHash = t => [...String(t)].reduce((a,c)=>(a*31+c.charCodeAt(0))>>>0,7);
+// A custom category's natural colour: the complement of its emoji's hue (or a fixed one for a plain emoji).
+const baseTopicStyle = t => {
+  const emoji=getTopic(t).icon;
+  if(!_cardStyle.has(emoji)){ const h=emojiHue(emoji); _cardStyle.set(emoji,h==null?CUSTOM_STYLES[nameHash(t)%CUSTOM_STYLES.length]:complement(h)); }
+  return _cardStyle.get(emoji);
+};
+// Colours handed out so no two categories look alike (see assignTopicColors).
+const _topicColor = new Map();
 const getTopicStyle = t => {
   if(TOPIC_STYLE[t]) return TOPIC_STYLE[t];
   if(!t) return TOPIC_STYLE.Other;
-  const emoji=getTopic(t).icon;
-  if(!_cardStyle.has(emoji)){ const h=emojiHue(emoji); _cardStyle.set(emoji,h==null?CUSTOM_STYLES[[...t].reduce((a,c)=>(a*31+c.charCodeAt(0))>>>0,7)%CUSTOM_STYLES.length]:complement(h)); }
-  return _cardStyle.get(emoji);
+  return _topicColor.get(t)||baseTopicStyle(t);
 };
+// A colour (hex or hsl) as {h, s}: its hue, and how strong it is (0 grey … 1 vivid). h is null for a near-grey.
+const colourOf = c => {
+  const m=String(c).match(/^hsl\((\d+(?:\.\d+)?),\s*(\d+)%/); if(m) return { h:+m[1], s:+m[2]/100 };
+  const x=String(c).match(/^#([0-9a-f]{6})$/i); if(!x) return { h:null, s:0 };
+  const [r,g,b]=[0,2,4].map(i=>parseInt(x[1].slice(i,i+2),16)/255), mx=Math.max(r,g,b), mn=Math.min(r,g,b), d=mx-mn, l=(mx+mn)/2;
+  if(d<.06) return { h:null, s:0 };
+  const h=mx===r?((g-b)/d)%6:mx===g?(b-r)/d+2:(r-g)/d+4;
+  return { h:(h*60+360)%360, s:d/(1-Math.abs(2*l-1)) };
+};
+const hueGap = (a,b) => { const d=Math.abs(a-b)%360; return Math.min(d,360-d); };
+const looksAlike = (a,b) => a.h!=null&&b.h!=null&&hueGap(a.h,b.h)<22&&Math.abs(a.s-b.s)<.25;   // same hue, and about as strong
+const styleFromHue = h => ({ bg:`hsl(${h},68%,85%)`, fg:INK, deep:`hsl(${h},58%,42%)`, a:`hsl(${h},70%,87%)`, b:`hsl(${h},70%,68%)`, c:`hsl(${h},60%,34%)` });
+const SPARE_HUES = Array.from({length:36},(_,i)=>i*10);   // the whole colour wheel, every 10°
+// Built-in categories keep their colours, and so does any custom one whose colour is already distinct.
+// Only the ones that look like another get a spare pastel, picked in a stable random order from the
+// name, so the colours stay put from one visit to the next.
+// inUse: the categories that have phrases; only those built-in colours count as taken.
+function assignTopicColors(ids,inUse){
+  _topicColor.clear();
+  const taken=Object.entries(TOPIC_STYLE).filter(([k])=>inUse.has(k)).map(([,v])=>colourOf(v.bg));
+  const custom=[...new Set(ids)].filter(t=>t&&!TOPIC_STYLE[t]).sort().map(t=>({ t, c:colourOf(baseTopicStyle(t).bg) }));
+  // 1. keep every colour that clashes with nothing; 2. in each group of look-alikes keep the one that clashes least
+  const clashes=x=>custom.filter(y=>y!==x&&looksAlike(x.c,y.c)).length;
+  const order=[...custom].sort((a,b)=>clashes(a)-clashes(b)||a.t.localeCompare(b.t));
+  const later=[];
+  order.forEach(x=>{ if(taken.some(y=>looksAlike(x.c,y))) later.push(x); else taken.push(x.c); });
+  // 3. the rest get a spare pastel unlike anything kept
+  const spare=h=>({ h, s:.68 });
+  later.sort((a,b)=>a.t.localeCompare(b.t)).forEach(({t})=>{
+    const spares=[...SPARE_HUES].sort((a,b)=>nameHash(t+a)-nameHash(t+b));
+    const gap=h=>Math.min(360,...taken.map(x=>x.h==null?360:hueGap(x.h,h)));
+    const pick=spares.reduce((best,h)=>gap(h)>gap(best)?h:best);   // the hue furthest from every one already shown (ties: the name's random order)
+    taken.push(spare(pick)); _topicColor.set(t,styleFromHue(pick));
+  });
+}
 const MASTERY_LABELS = ["New","Learning","Review","Mastered"];
 const MASTERY_COLORS = ["#b8b5c8","#60a5fa","#fb923c","#22c55e"];
 const SRS_MULT = [1.0,2.5,4.0], SRS_DAYS = [1,4,10];
@@ -871,7 +913,7 @@ function TopicArt({ topic, pad=18 }) {       // pad: room around the drawing, so
 // A person's illustration as a small tilted print: the line art has see-through faces and clothes, so it needs a light card behind it.
 function PersonPrint({ src, size, tilt=5, style={} }) {
   return (
-    <div aria-hidden="true" style={{width:size,height:size,flexShrink:0,background:"#fdfaf3",border:outline(2),borderRadius:8,boxShadow:drop(3,3),overflow:"hidden",transform:`rotate(${tilt}deg)`,position:"relative",...style}}>
+    <div aria-hidden="true" style={{width:size,height:size,flexShrink:0,background:"#fff",border:outline(2),borderRadius:8,boxShadow:drop(3,3),overflow:"hidden",transform:`rotate(${tilt}deg)`,position:"relative",...style}}>
       <img src={src} alt="" style={{position:"absolute",left:0,right:0,bottom:0,width:"100%",height:"94%",objectFit:"contain",objectPosition:"center bottom",display:"block"}}/>
     </div>
   );
@@ -1321,7 +1363,7 @@ function BiliG() {
     const known=new Set(TOPICS.map(t=>t.id));
     return [...new Set([...phrases.map(p=>p.topic),...bulkRows.map(r=>r.topic),...scanRows.map(r=>r.topic),...bulkExtra,...Object.values(manageEdits).map(e=>e.topic),form.topic,...catRows.map(r=>r.name)])].filter(t=>t&&!known.has(t)).sort();
   },[phrases,bulkRows,scanRows,bulkExtra,manageEdits,form.topic,catRows]);
-  const topicList = useMemo(()=>[...TOPICS.slice(0,-1).map(t=>getTopic(t.id)),...customTopicIds.map(getTopic),getTopic("Other")],[customTopicIds,catRows]);
+  const topicList = useMemo(()=>{ assignTopicColors(customTopicIds,new Set(phrases.map(p=>p.topic))); return [...TOPICS.slice(0,-1).map(t=>getTopic(t.id)),...customTopicIds.map(getTopic),getTopic("Other")]; },[customTopicIds,catRows,phrases]);
   useEffect(()=>{ if(topicFilter!=="All"&&!topicList.some(t=>t.id===topicFilter)) setTopicFilter("All"); },[topicList,topicFilter]);
 
   // Filtered by BOTH active language and topic
@@ -2044,7 +2086,7 @@ function BiliG() {
                   {/* the "photo": a tilted print of an illustrated street, with the word's category as a sticker on it */}
                   <div style={{position:"absolute",[flip?"left":"right"]:isDesktop?44:-14,top:isDesktop?32:28,width:isDesktop?250:(flip?"44%":"46%"),height:isDesktop?330:"82%",zIndex:1}}>
                     {person?(
-                      <div style={{position:"absolute",inset:isDesktop?"4% 6% 8%":"6% 4% 10%",background:ws.bg,border:outline(),borderRadius:6,boxShadow:drop(4,4),overflow:"hidden",transform:`rotate(${flip?-4:4}deg)`,zIndex:1}}>
+                      <div style={{position:"absolute",inset:isDesktop?"4% 6% 8%":"6% 4% 10%",background:"#fff",border:outline(),borderRadius:6,boxShadow:drop(4,4),overflow:"hidden",transform:`rotate(${flip?-4:4}deg)`,zIndex:1}}>
                         <img src={person} alt="" aria-hidden="true" style={{position:"absolute",left:0,right:0,bottom:0,width:"100%",height:"92%",objectFit:"contain",objectPosition:"center bottom",display:"block"}}/>
                       </div>
                     ):art?(
